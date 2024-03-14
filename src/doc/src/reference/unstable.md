@@ -433,6 +433,11 @@ $ cargo +nightly build -Z build-std=core,alloc
 
 The value here is a comma-separated list of standard library crates to build.
 
+Be aware that because the standard library requires external support to function
+(such as from an OS) some built-in Rust targets (such as `-none` "bare-metal"
+targets) don't support it even if built locally. In these cases the standard
+library will be marked as unstable under the `restricted_std` feature.
+
 ### Requirements
 
 As a summary, a list of requirements today to use `-Z build-std` are:
