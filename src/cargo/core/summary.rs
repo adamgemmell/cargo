@@ -65,7 +65,7 @@ impl Summary {
     #[tracing::instrument(skip_all)]
     pub fn new(
         pkg_id: PackageId,
-        dependencies: Vec<Dependency>,
+        mut dependencies: Vec<Dependency>,
         features: &BTreeMap<InternedString, Vec<InternedString>>,
         links: Option<impl Into<InternedString>>,
         rust_version: Option<RustVersion>,
@@ -82,6 +82,12 @@ impl Summary {
                 )
             }
         }
+
+        //compiler_builtins/proc_macro not needed here
+        for krate in ["std", "alloc", "core", "panic_unwind", "test"] {
+            dependencies.push(Dependency::new_injected_builtin(krate.into()));
+        }
+
         let feature_map = build_feature_map(features, &dependencies)?;
         Ok(Summary {
             inner: Arc::new(Inner {

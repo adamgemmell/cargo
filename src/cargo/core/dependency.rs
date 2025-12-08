@@ -166,6 +166,34 @@ impl Dependency {
         }
     }
 
+    pub fn new_injected_builtin(name: InternedString) -> Dependency {
+        assert!(!name.is_empty());
+        // Injecting builtins earlier (somewhere with access to RustcTargetData) is needed instead of this
+        let home = std::env::var("HOME").expect("HOME is set");
+        let path = format!(
+            "file://{home}/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/"
+        );
+        Dependency {
+            inner: Arc::new(Inner {
+                name,
+                source_id: SourceId::from_url(&format!("builtin+{path}{name}"))
+                    .expect("package name is valid url"),
+                registry_id: None,
+                req: OptVersionReq::Any,
+                kind: DepKind::Normal,
+                only_match_name: true,
+                optional: false,
+                public: false,
+                features: Vec::new(),
+                default_features: true,
+                specified_req: false,
+                platform: None,
+                explicit_name_in_toml: None,
+                artifact: None,
+            }),
+        }
+    }
+
     pub fn serialized(
         &self,
         unstable_flags: &CliUnstable,

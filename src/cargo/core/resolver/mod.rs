@@ -200,6 +200,9 @@ fn activate_deps_loop(
     gctx: Option<&GlobalContext>,
     past_conflicting_activations: &mut conflict_cache::ConflictCache,
 ) -> CargoResult<ResolverContext> {
+    // TODO: Check for builtins and return them
+    // Fix errors
+    // Inject earlier?
     let mut resolver_ctx = ResolverContext::new();
     let mut backtrack_stack = Vec::new();
     let mut remaining_deps = RemainingDeps::new();
