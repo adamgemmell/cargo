@@ -84,8 +84,11 @@ impl Summary {
         }
 
         //compiler_builtins/proc_macro not needed here
-        for krate in ["std", "alloc", "core", "panic_unwind", "test"] {
-            dependencies.push(Dependency::new_injected_builtin(krate.into()));
+        if !pkg_id.source_id().is_builtin() {
+            // && build_std is on...
+            for krate in ["std", "alloc", "core", "panic_unwind", "test"] {
+                dependencies.push(Dependency::new_injected_builtin(krate.into()));
+            }
         }
 
         let feature_map = build_feature_map(features, &dependencies)?;
@@ -101,6 +104,10 @@ impl Summary {
             }),
         })
     }
+
+    // Virtual summary representing a package Cargo knows how to retrieve later
+    // pub fn new_builtin(pkg_id: PackageId,
+    //    features: &BTreeMap<InternedString, Vec<InternedString>>) ->
 
     pub fn package_id(&self) -> PackageId {
         self.inner.package_id

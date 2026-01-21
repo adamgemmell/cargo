@@ -9,7 +9,7 @@
 //! The former is just one kind of source,
 //! while the latter involves operations on the registry Web API.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::task::{Poll, ready};
 
 use crate::core::{Dependency, PackageId, PackageSet, Patch, SourceId, Summary};
@@ -24,6 +24,7 @@ use crate::util::{CanonicalUrl, GlobalContext};
 use annotate_snippets::Level;
 use anyhow::Context as _;
 use itertools::Itertools;
+use semver::Version;
 use tracing::{debug, trace};
 use url::Url;
 
@@ -724,6 +725,24 @@ impl<'gctx> Registry for PackageRegistry<'gctx> {
                 )
             })?;
 
+        if dep.source_id().is_builtin() {
+            // Create a dummy Summary to do what we want. Maybe this pans out, maybe not
+            let pkg_id = PackageId::new(
+                dep.package_name(),
+                Version::new(0, 0, 0),
+                SourceId::new_builtin(&dep.package_name()).expect("is good"),
+            );
+
+            let summary = Summary::new(
+                pkg_id,
+                vec![],
+                &BTreeMap::new(), // TODO: bodge
+                Option::<String>::None,
+                None,
+            )?;
+            f(IndexSummary::Candidate(summary));
+            return Poll::Ready(Ok(()));
+        }
         let source = self.sources.get_mut(dep.source_id());
         match (override_summary, source) {
             (Some(_), None) => {

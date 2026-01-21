@@ -168,16 +168,10 @@ impl Dependency {
 
     pub fn new_injected_builtin(name: InternedString) -> Dependency {
         assert!(!name.is_empty());
-        // Injecting builtins earlier (somewhere with access to RustcTargetData) is needed instead of this
-        let home = std::env::var("HOME").expect("HOME is set");
-        let path = format!(
-            "file://{home}/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/"
-        );
         Dependency {
             inner: Arc::new(Inner {
                 name,
-                source_id: SourceId::from_url(&format!("builtin+{path}{name}"))
-                    .expect("package name is valid url"),
+                source_id: SourceId::new_builtin(&name).expect("package name is valid url"),
                 registry_id: None,
                 req: OptVersionReq::Any,
                 kind: DepKind::Normal,
@@ -482,6 +476,10 @@ impl Dependency {
     /// Previously, every dependency was potentially seen as library.
     pub(crate) fn maybe_lib(&self) -> bool {
         self.artifact().map(|a| a.is_lib).unwrap_or(true)
+    }
+
+    pub fn is_opaque(&self) -> bool {
+        self.inner.opaque
     }
 }
 

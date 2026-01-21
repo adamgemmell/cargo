@@ -197,16 +197,30 @@ fn attach_std_deps(
     // Attach the standard library as a dependency of every target unit.
     let mut found = false;
     for (unit, deps) in state.unit_dependencies.iter_mut() {
+        // Might be too late, we already have build script units for the dummy builtins
         if !unit.kind.is_host() && !unit.mode.is_run_custom_build() {
-            deps.extend(std_roots[&unit.kind].iter().map(|unit| UnitDep {
-                unit: unit.clone(),
-                unit_for: UnitFor::new_normal(unit.kind),
-                extern_crate_name: unit.pkg.name(),
-                dep_name: None,
-                // TODO: Does this `public` make sense?
-                public: true,
-                noprelude: true,
-            }));
+            // We can't mutate Units. Just replace all the deps to them instead, which leaves the
+            // dummy builtin units still in the graph.
+            for dep in deps.iter_mut() {
+                let dep_pkg_id = dep.unit.pkg.package_id();
+                if dep_pkg_id.source_id().is_builtin() {
+                    let units: Vec<_> = std_roots[&unit.kind]
+                        .iter()
+                        .filter(|unit| unit.pkg.package_id().name() == dep_pkg_id.name())
+                        .collect();
+                    assert!(units.len() == 1);
+                    let unit = units[0];
+                    *dep = UnitDep {
+                        unit: unit.clone(),
+                        unit_for: UnitFor::new_normal(unit.kind),
+                        extern_crate_name: unit.pkg.name(),
+                        dep_name: None,
+                        // TODO: Does this `public` make sense?
+                        public: true,
+                        noprelude: true,
+                    }
+                }
+            }
             found = true;
         }
     }
@@ -214,6 +228,9 @@ fn attach_std_deps(
     // include these if no units actually needed the standard library.
     if found {
         for (unit, deps) in std_unit_deps.into_iter() {
+            if unit.pkg.package_id().name() == "sysroot" {
+                continue;
+            }
             if let Some(other_unit) = state.unit_dependencies.insert(unit, deps) {
                 panic!("std unit collision with existing unit: {:?}", other_unit);
             }

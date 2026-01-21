@@ -49,12 +49,6 @@ pub struct Resolve {
     summaries: HashMap<PackageId, Summary>,
 }
 
-pub struct PartialResolve {
-    resolve: Resolve,
-    /// The set of pending opaque dependencies
-    promises: Vec<PackageId>,
-}
-
 /// A version to indicate how a `Cargo.lock` should be serialized.
 ///
 /// When creating a new lockfile, the version in [`ResolveVersion::default`] is used.
