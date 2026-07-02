@@ -22,9 +22,9 @@
 //! [`ConfigValue`]: CV
 
 use crate::util::context::key::ArrayItemKeyPath;
-use crate::util::context::value;
 use crate::util::context::{ConfigError, ConfigKey, GlobalContext};
 use crate::util::context::{ConfigValue as CV, Definition, Value};
+use crate::util::context::{ConfigView, value};
 use crate::util::data_structures::HashSet;
 use serde::{de, de::IntoDeserializer};
 use std::vec;
@@ -43,6 +43,8 @@ pub(super) struct Deserializer<'gctx> {
     /// collide with `CARGO_BUILD_TARGET_DIR`. See `ConfigMapAccess` for
     /// details.
     pub(super) env_prefix_ok: bool,
+    /// Limits the places to search for a key in - used for build-std.
+    pub(super) config_view: ConfigView,
 }
 
 macro_rules! deserialize_method {
@@ -407,6 +409,7 @@ impl<'de, 'gctx> de::MapAccess<'de> for ConfigMapAccess<'gctx> {
                 gctx: self.de.gctx,
                 key: self.de.key.clone(),
                 env_prefix_ok,
+                config_view: self.de.config_view,
             })
             .map_err(|e| {
                 if !e.is_missing_field() {
@@ -602,7 +605,7 @@ impl<'de, 'gctx, 'err> de::MapAccess<'de> for ValueDeserializer<'gctx, 'err> {
         // to figure out where the field we just deserialized was defined at.
         match self.definition() {
             Definition::BuiltIn => seed.deserialize(0.into_deserializer()),
-            Definition::Path(path) => {
+            Definition::Path(path) | Definition::BuildStdPath(path) => {
                 seed.deserialize(Tuple2Deserializer(1i32, path.to_string_lossy()))
             }
             Definition::Environment(env) => {

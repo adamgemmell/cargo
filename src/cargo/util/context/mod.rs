@@ -197,6 +197,20 @@ enum WhyLoad {
     FileDiscovery,
 }
 
+/// Limits the places to search for a key in.
+///
+/// This is useful for build-std, for which in addition to having its own
+/// config file some keys can be inherited from the user's configuration
+/// and some keys cannot.
+#[derive(Copy, Clone)]
+enum ConfigView {
+    /// Look at the user's configuration, as publicly documented
+    User,
+    /// Look at the internal config shipped with the standard library source, used for
+    /// build-std. Some config keys can be overridden by user configuration.
+    BuildStd,
+}
+
 /// A previously generated authentication token and the data needed to determine if it can be reused.
 #[derive(Debug)]
 pub struct CredentialCacheValue {
@@ -215,6 +229,8 @@ pub struct GlobalContext {
     shell: Mutex<Shell>,
     /// A collection of configuration options
     values: OnceLock<HashMap<String, ConfigValue>>,
+    /// Values from build-std's config, to be merged depending on the ConfigView requested
+    build_std_values: OnceLock<HashMap<String, ConfigValue>>,
     /// A collection of configuration options from the credentials file
     credential_values: OnceLock<HashMap<String, ConfigValue>>,
     /// CLI config values, passed in via `configure`.
@@ -2107,6 +2123,20 @@ impl GlobalContext {
             gctx: self,
             key: ConfigKey::from_str(key),
             env_prefix_ok: true,
+            config_view: ConfigView::User,
+        };
+        T::deserialize(d).map_err(|e| e.into())
+    }
+
+    /// Retreive a config variable for the purpose of build-std.
+    /// Checks the builtin config file too if needed, and will error if its not present.
+    pub fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+        let d = Deserializer {
+            gctx: self,
+            key: ConfigKey::from_str(key),
+            env_prefix_ok: true,
+            //TODO: Infer BuildStdOnly or BuildStdFallback from key
+            config_view: ConfigView::BuildStd,
         };
         T::deserialize(d).map_err(|e| e.into())
     }
@@ -2377,7 +2407,9 @@ impl ConfigInclude {
     /// Otherwise returns `Some(PathBuf)` with the absolute path.
     fn resolve_path(&self, gctx: &GlobalContext) -> Option<PathBuf> {
         let abs_path = match &self.def {
-            Definition::Path(p) | Definition::Cli(Some(p)) => p.parent().unwrap(),
+            Definition::Path(p) | Definition::Cli(Some(p)) | Definition::BuildStdPath(p) => {
+                p.parent().unwrap()
+            }
             Definition::Environment(_) | Definition::Cli(None) | Definition::BuiltIn => gctx.cwd(),
         }
         .join(&self.path);
