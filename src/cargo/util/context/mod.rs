@@ -842,7 +842,7 @@ impl GlobalContext {
         Ok(Filesystem::new(path))
     }
 
-    /// Get a configuration value by key.
+    /// Get a user configuration value by key.
     ///
     /// This does NOT look at environment variables. See `get_cv_with_env` for
     /// a variant that supports environment variables.
@@ -854,6 +854,18 @@ impl GlobalContext {
             }
         }
         self.get_cv_helper(key, &*self.values()?)
+    }
+
+    /// Get a configuration value by key according to a defined view of the config.
+    fn get_cv_in_view(
+        &self,
+        key: &ConfigKey,
+        view: ConfigView,
+    ) -> CargoResult<Option<ConfigValue>> {
+        match view {
+            ConfigView::User => self.get_cv(key),
+            _ => unimplemented!(),
+        }
     }
 
     fn get_cv_helper(
@@ -978,6 +990,18 @@ impl GlobalContext {
                     Ok(Some(CV::String(env.to_string(), env_def)))
                 }
             }
+        }
+    }
+
+    /// Get a configuration value by key according to a defined view of the config.
+    fn get_cv_with_env_in_view(
+        &self,
+        key: &ConfigKey,
+        view: ConfigView,
+    ) -> CargoResult<Option<CV>> {
+        match view {
+            ConfigView::User => self.get_cv_with_env(key),
+            _ => unimplemented!(),
         }
     }
 
