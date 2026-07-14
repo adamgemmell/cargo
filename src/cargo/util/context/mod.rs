@@ -195,6 +195,8 @@ enum WhyLoad {
     Cli,
     /// Loaded due to config file discovery.
     FileDiscovery,
+    /// Loaded due to build std config discovery
+    BuildStdConfig,
 }
 
 /// Limits the places to search for a key in.
@@ -219,6 +221,14 @@ pub struct CredentialCacheValue {
     pub operation_independent: bool,
 }
 
+#[derive(Debug)]
+struct ConfigValues {
+    // The user's configuration options
+    user_config: HashMap<String, ConfigValue>,
+    // Build-std's configuration options
+    build_std_config: Option<HashMap<String, ConfigValue>>,
+}
+
 /// Configuration information for cargo. This is not specific to a build, it is information
 /// relating to cargo itself.
 #[derive(Debug)]
@@ -227,10 +237,8 @@ pub struct GlobalContext {
     home_path: Filesystem,
     /// Information about how to write messages to the shell
     shell: Mutex<Shell>,
-    /// A collection of configuration options
-    values: OnceLock<HashMap<String, ConfigValue>>,
-    /// Values from build-std's config, to be merged depending on the ConfigView requested
-    build_std_values: OnceLock<HashMap<String, ConfigValue>>,
+    /// A collection of the user's configuration options
+    values: OnceLock<ConfigValues>,
     /// A collection of configuration options from the credentials file
     credential_values: OnceLock<HashMap<String, ConfigValue>>,
     /// CLI config values, passed in via `configure`.
@@ -651,7 +659,24 @@ impl GlobalContext {
     /// for checking environment variables. Callers outside of the `config`
     /// module should avoid using this.
     pub fn values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
-        self.values.try_borrow_with(|| self.load_values())
+        self.values
+            .try_borrow_with(|| self.load_values_from(&self.cwd))
+            .map(|c| &c.user_config)
+    }
+
+    /// Gets all build-std config values from disk.
+    ///
+    /// This will lazy-load the values as necessary, returning an error if the build-std source
+    /// cannot be found.
+    pub fn build_std_values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
+        self.values
+            .try_borrow_with(|| self.load_values_from(&self.cwd))
+            .map(|c| {
+                c.build_std_config
+                    .as_ref()
+                    .context("missing build-std config")
+            })
+            .flatten()
     }
 
     /// Gets a mutable copy of the on-disk config values.
@@ -662,7 +687,8 @@ impl GlobalContext {
     /// using this if possible.
     pub fn values_mut(&mut self) -> CargoResult<&mut HashMap<String, ConfigValue>> {
         let _ = self.values()?;
-        Ok(self.values.get_mut().expect("already loaded config values"))
+        let values = self.values.get_mut().expect("already loaded config values");
+        Ok(&mut values.user_config)
     }
 
     // Note: this is used by RLS, not Cargo.
@@ -670,7 +696,11 @@ impl GlobalContext {
         if self.values.get().is_some() {
             bail!("config values already found")
         }
-        match self.values.set(values.into()) {
+        let values = ConfigValues {
+            user_config: values.into(),
+            build_std_config: None,
+        };
+        match self.values.set(values) {
             Ok(()) => Ok(()),
             Err(_) => bail!("could not fill values"),
         }
@@ -864,7 +894,7 @@ impl GlobalContext {
     ) -> CargoResult<Option<ConfigValue>> {
         match view {
             ConfigView::User => self.get_cv(key),
-            _ => unimplemented!(),
+            ConfigView::BuildStd => self.get_cv_helper(key, &*self.build_std_values()?),
         }
     }
 
@@ -1343,7 +1373,7 @@ impl GlobalContext {
 
     /// Loads configuration from the filesystem.
     pub fn load_values(&self) -> CargoResult<HashMap<String, ConfigValue>> {
-        self.load_values_from(&self.cwd)
+        self.load_values_from(&self.cwd).map(|c| c.user_config)
     }
 
     /// Like [`load_values`](GlobalContext::load_values) but without merging config values.
@@ -1394,25 +1424,59 @@ impl GlobalContext {
     }
 
     /// Start a config file discovery from a path and merges all config values found.
-    fn load_values_from(&self, path: &Path) -> CargoResult<HashMap<String, ConfigValue>> {
+    fn load_values_from(&self, path: &Path) -> CargoResult<ConfigValues> {
         // The root config value container isn't from any external source,
         // so its definition should be built-in.
         let mut cfg = CV::Table(HashMap::default(), Definition::BuiltIn);
         let home = self.home_path.clone().into_path_unlocked();
 
+        // build-std config first
+        // TODO: We need the sysroot in the globalcontext. It's useful in too many places
+        let std_path = Path::new(
+            "/home/adagem01/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/build-std-config.toml",
+        );
+        // We merge the build-std config values with the user config later, on retrieval
+        let value = self.load_buildstd_file(std_path);
+        let std_cfg = match value {
+            Ok(value) => {
+                let mut std_cfg = CV::Table(HashMap::new(), Definition::BuiltIn);
+                std_cfg.merge(value, false).with_context(|| {
+                    format!(
+                        "failed to merge std configuration at `{}`",
+                        std_path.display()
+                    )
+                })?;
+                Some(std_cfg)
+            }
+            Err(_) => None, // std source is likely missing. This is only an error if build-std is
+                            // actually used
+        };
+
         self.walk_tree(path, &home, |path| {
             let value = self.load_file(path)?;
-            cfg.merge(value, false).with_context(|| {
+            cfg.merge(value.clone(), false).with_context(|| {
                 format!("failed to merge configuration at `{}`", path.display())
             })?;
+
+            //TODO: Merge into std_cfg if appropriate for the key
             Ok(())
         })
         .context("could not load Cargo configuration")?;
 
-        match cfg {
-            CV::Table(map, _) => Ok(map),
-            _ => unreachable!(),
-        }
+        let CV::Table(map, _) = cfg else {
+            unreachable!();
+        };
+        let build_std_config = std_cfg.map(|cfg| {
+            let CV::Table(map, _) = cfg else {
+                unreachable!();
+            };
+            map
+        });
+
+        Ok(ConfigValues {
+            user_config: map,
+            build_std_config,
+        })
     }
 
     /// Loads a config value from a path.
@@ -1420,6 +1484,12 @@ impl GlobalContext {
     /// This is used during config file discovery.
     fn load_file(&self, path: &Path) -> CargoResult<ConfigValue> {
         self._load_file(path, &mut HashSet::default(), true, WhyLoad::FileDiscovery)
+    }
+
+    /// Loads a build-std config value from the standard library source. Does not follow include
+    /// directives.
+    fn load_buildstd_file(&self, path: &Path) -> CargoResult<ConfigValue> {
+        self._load_file(path, &mut HashSet::new(), false, WhyLoad::BuildStdConfig)
     }
 
     /// Loads a config value from a path with options.
@@ -1452,6 +1522,7 @@ impl GlobalContext {
         let def = match why_load {
             WhyLoad::Cli => Definition::Cli(Some(path.into())),
             WhyLoad::FileDiscovery => Definition::Path(path.into()),
+            WhyLoad::BuildStdConfig => Definition::BuildStdPath(path.into()),
         };
         let value = CV::from_toml(def, toml::Value::Table(toml)).with_context(|| {
             format!(
