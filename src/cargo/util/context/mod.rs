@@ -204,7 +204,7 @@ enum WhyLoad {
 /// This is useful for build-std, for which in addition to having its own
 /// config file some keys can be inherited from the user's configuration
 /// and some keys cannot.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 enum ConfigView {
     /// Look at the user's configuration, as publicly documented
     User,
@@ -233,6 +233,46 @@ struct ConfigValues {
 /// relating to cargo itself.
 #[derive(Debug)]
 pub struct GlobalContext {
+    inner: GlobalContextInner,
+    view: ConfigView,
+    /// This should be false if:
+    /// - this is an artifact of the rustc distribution process for "stable" or for "beta"
+    /// - this is an `#[test]` that does not opt in with `enable_nightly_features`
+    /// - this is an integration test that uses `ProcessBuilder`
+    ///      that does not opt in with `masquerade_as_nightly_cargo`
+    /// This should be true if:
+    /// is an artifact of the rustc distribution process for "nightly"
+    /// - this is being used in the rustc distribution process internally
+    /// - this is a cargo executable that was built from source
+    /// - this is an `#[test]` that called `enable_nightly_features`
+    /// - this is an integration test that uses `ProcessBuilder`
+    ///       that called `masquerade_as_nightly_cargo`
+    /// It's public to allow tests use nightly features.
+    /// NOTE: this should be set before `configure()`. If calling this from an integration test,
+    /// consider using `ConfigBuilder::enable_nightly_features` instead.
+    pub nightly_features_allowed: bool,
+}
+
+impl GlobalContext {
+    /// Creates a new config instance.
+    ///
+    /// This is typically used for tests or other special cases. `default` is
+    /// preferred otherwise.
+    ///
+    /// This does only minimal initialization. In particular, it does not load
+    /// any config files from disk. Those will be loaded lazily as-needed.
+    pub fn new(shell: Shell, cwd: PathBuf, homedir: PathBuf) -> GlobalContext {
+        GlobalContext {
+            inner: GlobalContextInner::new(shell, cwd, homedir),
+            view: ConfigView::User,
+            nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
+        }
+    }
+}
+
+/// The immutable (or interior-mutable) core of the GlobalContext
+#[derive(Debug)]
+struct GlobalContextInner {
     /// The location of the user's Cargo home directory. OS-dependent.
     home_path: Filesystem,
     /// Information about how to write messages to the shell
@@ -303,22 +343,6 @@ pub struct GlobalContext {
     doc_extern_map: OnceLock<RustdocExternMap>,
     progress_config: ProgressConfig,
     env_config: OnceLock<Arc<HashMap<String, OsString>>>,
-    /// This should be false if:
-    /// - this is an artifact of the rustc distribution process for "stable" or for "beta"
-    /// - this is an `#[test]` that does not opt in with `enable_nightly_features`
-    /// - this is an integration test that uses `ProcessBuilder`
-    ///      that does not opt in with `masquerade_as_nightly_cargo`
-    /// This should be true if:
-    /// - this is an artifact of the rustc distribution process for "nightly"
-    /// - this is being used in the rustc distribution process internally
-    /// - this is a cargo executable that was built from source
-    /// - this is an `#[test]` that called `enable_nightly_features`
-    /// - this is an integration test that uses `ProcessBuilder`
-    ///       that called `masquerade_as_nightly_cargo`
-    /// It's public to allow tests use nightly features.
-    /// NOTE: this should be set before `configure()`. If calling this from an integration test,
-    /// consider using `ConfigBuilder::enable_nightly_features` instead.
-    pub nightly_features_allowed: bool,
     /// `WorkspaceRootConfigs` that have been found
     ws_roots: Mutex<HashMap<PathBuf, WorkspaceRootConfig>>,
     /// The global cache tracker is a database used to track disk cache usage.
@@ -328,7 +352,7 @@ pub struct GlobalContext {
     deferred_global_last_use: OnceLock<Mutex<DeferredGlobalLastUse>>,
 }
 
-impl GlobalContext {
+impl GlobalContextInner {
     /// Creates a new config instance.
     ///
     /// This is typically used for tests or other special cases. `default` is
@@ -336,7 +360,7 @@ impl GlobalContext {
     ///
     /// This does only minimal initialization. In particular, it does not load
     /// any config files from disk. Those will be loaded lazily as-needed.
-    pub fn new(mut shell: Shell, cwd: PathBuf, homedir: PathBuf) -> GlobalContext {
+    fn new(mut shell: Shell, cwd: PathBuf, homedir: PathBuf) -> GlobalContextInner {
         static GLOBAL_JOBSERVER: LazyLock<CargoResult<Option<jobserver::Client>>> = LazyLock::new(
             || {
                 use jobserver::FromEnvErrorKind;
@@ -395,7 +419,7 @@ impl GlobalContext {
             Err(_) => jiff::Timestamp::now(),
         };
 
-        GlobalContext {
+        GlobalContextInner {
             home_path: Filesystem::new(homedir),
             shell: Mutex::new(shell),
             cwd,
@@ -432,7 +456,6 @@ impl GlobalContext {
             doc_extern_map: Default::default(),
             progress_config: ProgressConfig::default(),
             env_config: Default::default(),
-            nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
             ws_roots: Default::default(),
             global_cache_tracker: Default::default(),
             deferred_global_last_use: Default::default(),
@@ -443,7 +466,7 @@ impl GlobalContext {
     ///
     /// This does only minimal initialization. In particular, it does not load
     /// any config files from disk. Those will be loaded lazily as-needed.
-    pub fn default() -> CargoResult<GlobalContext> {
+    pub fn default() -> CargoResult<GlobalContextInner> {
         let shell = Shell::new();
         let cwd =
             env::current_dir().context("couldn't get the current directory of the process")?;
