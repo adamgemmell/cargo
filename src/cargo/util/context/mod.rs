@@ -269,6 +269,15 @@ impl GlobalContext {
         }
     }
 
+    pub fn with_buildstd_view(self) -> GlobalContext {
+        //TODO: Can't actually call this as few parts of Cargo have full ownership of gctx
+        GlobalContext {
+            inner: self.inner,
+            view: ConfigView::BuildStd,
+            nightly_features_allowed: self.nightly_features_allowed,
+        }
+    }
+
     /// Creates a new instance, with all default settings.
     ///
     /// This does only minimal initialization. In particular, it does not load
@@ -726,12 +735,6 @@ impl GlobalContext {
             config_view: self.view,
         };
         T::deserialize(d).map_err(|e| e.into())
-    }
-
-    /// Retreive a config variable for the purpose of build-std.
-    /// Checks the builtin config file too if needed, and will error if its not present.
-    pub fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
-        self.inner.get_buildstd(key)
     }
 
     /// Obtain a [`Path`] from a [`Filesystem`], verifying that the
@@ -2644,17 +2647,6 @@ impl GlobalContextInner {
             key: ConfigKey::from_str(key),
             env_prefix_ok: true,
             config_view: ConfigView::User,
-        };
-        T::deserialize(d).map_err(|e| e.into())
-    }
-
-    fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
-        let d = Deserializer {
-            gctx: self,
-            key: ConfigKey::from_str(key),
-            env_prefix_ok: true,
-            //TODO: Infer BuildStdOnly or BuildStdFallback from key
-            config_view: ConfigView::BuildStd,
         };
         T::deserialize(d).map_err(|e| e.into())
     }
