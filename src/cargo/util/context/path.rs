@@ -82,7 +82,7 @@ impl ConfigRelativePath {
     /// `\`) will be returned as-is, and everything else will fall through to an
     /// absolute path.
     pub fn resolve_program(&self, gctx: &GlobalContext) -> PathBuf {
-        gctx.string_to_path(&self.0.val, &self.0.definition)
+        gctx.inner.string_to_path(&self.0.val, &self.0.definition)
     }
 }
 

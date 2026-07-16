@@ -22,7 +22,7 @@
 //! [`ConfigValue`]: CV
 
 use crate::util::context::key::ArrayItemKeyPath;
-use crate::util::context::{ConfigError, ConfigKey, GlobalContext};
+use crate::util::context::{ConfigError, ConfigKey, GlobalContextInner};
 use crate::util::context::{ConfigValue as CV, Definition, Value};
 use crate::util::context::{ConfigView, value};
 use crate::util::data_structures::HashSet;
@@ -33,7 +33,7 @@ use std::vec;
 /// [`GlobalContext::get`].
 #[derive(Clone)]
 pub(super) struct Deserializer<'gctx> {
-    pub(super) gctx: &'gctx GlobalContext,
+    pub(super) gctx: &'gctx GlobalContextInner,
     /// The current key being deserialized.
     pub(super) key: ConfigKey,
     /// Whether or not this key part is allowed to be an inner table. For

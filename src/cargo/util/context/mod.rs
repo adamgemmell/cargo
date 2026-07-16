@@ -268,6 +268,528 @@ impl GlobalContext {
             nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
         }
     }
+
+    /// Creates a new instance, with all default settings.
+    ///
+    /// This does only minimal initialization. In particular, it does not load
+    /// any config files from disk. Those will be loaded lazily as-needed.
+    pub fn default() -> CargoResult<GlobalContext> {
+        Ok(GlobalContext {
+            inner: GlobalContextInner::default()?,
+            view: ConfigView::User,
+            nightly_features_allowed: matches!(&*features::channel(), "nightly" | "dev"),
+        })
+    }
+
+    /// Gets the user's Cargo home directory (OS-dependent).
+    pub fn home(&self) -> &Filesystem {
+        self.inner.home()
+    }
+
+    /// Returns a path to display to the user with the location of their home
+    /// config file (to only be used for displaying a diagnostics suggestion,
+    /// such as recommending where to add a config value).
+    pub fn diagnostic_home_config(&self) -> String {
+        self.inner.diagnostic_home_config()
+    }
+
+    /// Gets the Cargo Git directory (`<cargo_home>/git`).
+    pub fn git_path(&self) -> Filesystem {
+        self.inner.git_path()
+    }
+
+    /// Gets the directory of code sources Cargo checkouts from Git bare repos
+    /// (`<cargo_home>/git/checkouts`).
+    pub fn git_checkouts_path(&self) -> Filesystem {
+        self.inner.git_checkouts_path()
+    }
+
+    /// Gets the directory for all Git bare repos Cargo clones
+    /// (`<cargo_home>/git/db`).
+    pub fn git_db_path(&self) -> Filesystem {
+        self.inner.git_db_path()
+    }
+
+    /// Gets the Cargo base directory for all registry information (`<cargo_home>/registry`).
+    pub fn registry_base_path(&self) -> Filesystem {
+        self.inner.registry_base_path()
+    }
+
+    /// Gets the Cargo registry index directory (`<cargo_home>/registry/index`).
+    pub fn registry_index_path(&self) -> Filesystem {
+        self.inner.registry_index_path()
+    }
+
+    /// Gets the Cargo registry cache directory (`<cargo_home>/registry/cache`).
+    pub fn registry_cache_path(&self) -> Filesystem {
+        self.inner.registry_cache_path()
+    }
+
+    /// Gets the Cargo registry source directory (`<cargo_home>/registry/src`).
+    pub fn registry_source_path(&self) -> Filesystem {
+        self.inner.registry_source_path()
+    }
+
+    /// Gets the default Cargo registry.
+    pub fn default_registry(&self) -> CargoResult<Option<String>> {
+        self.inner.default_registry()
+    }
+
+    /// Gets a reference to the shell, e.g., for writing error messages.
+    pub fn shell(&self) -> MutexGuard<'_, Shell> {
+        self.inner.shell()
+    }
+
+    /// Assert [`Self::shell`] is not in use
+    ///
+    /// Testing might not identify bugs with two accesses to `shell` at once
+    /// due to conditional logic,
+    /// so place this outside of the conditions to catch these bugs in more situations.
+    pub fn debug_assert_shell_not_borrowed(&self) {
+        self.inner.debug_assert_shell_not_borrowed()
+    }
+
+    /// Gets the path to the `rustdoc` executable.
+    pub fn rustdoc(&self) -> CargoResult<&Path> {
+        self.inner.rustdoc()
+    }
+
+    /// Gets the path to the `rustc` executable.
+    pub fn load_global_rustc(&self, ws: Option<&Workspace<'_>>) -> CargoResult<Rustc> {
+        self.inner.load_global_rustc(self, ws)
+    }
+
+    /// Gets the path to the `cargo` executable.
+    pub fn cargo_exe(&self) -> CargoResult<&Path> {
+        self.inner.cargo_exe()
+    }
+
+    /// Which package sources have been updated, used to ensure it is only done once.
+    pub fn updated_sources(&self) -> MutexGuard<'_, HashSet<SourceId>> {
+        self.inner.updated_sources()
+    }
+
+    /// Cached credentials from credential providers or configuration.
+    pub fn credential_cache(&self) -> MutexGuard<'_, HashMap<CanonicalUrl, CredentialCacheValue>> {
+        self.inner.credential_cache()
+    }
+
+    /// Cache of already parsed registries from the `[registries]` table.
+    pub(crate) fn registry_config(
+        &self,
+    ) -> MutexGuard<'_, HashMap<SourceId, Option<RegistryConfig>>> {
+        self.inner.registry_config()
+    }
+
+    /// Gets all config values from disk.
+    ///
+    /// This will lazy-load the values as necessary. Callers are responsible
+    /// for checking environment variables. Callers outside of the `config`
+    /// module should avoid using this.
+    pub fn values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
+        self.inner.values()
+    }
+
+    /// Gets all build-std config values from disk.
+    ///
+    /// This will lazy-load the values as necessary, returning an error if the build-std source
+    /// cannot be found.
+    pub fn build_std_values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
+        self.inner.build_std_values()
+    }
+
+    /// Gets a mutable copy of the on-disk config values.
+    ///
+    /// This requires the config values to already have been loaded. This
+    /// currently only exists for `cargo vendor` to remove the `source`
+    /// entries. This doesn't respect environment variables. You should avoid
+    /// using this if possible.
+    pub fn values_mut(&mut self) -> CargoResult<&mut HashMap<String, ConfigValue>> {
+        self.inner.values_mut()
+    }
+
+    pub fn set_values(&self, values: HashMap<String, ConfigValue>) -> CargoResult<()> {
+        self.inner.set_values(values)
+    }
+
+    /// Sets the path where ancestor config file searching will stop. The
+    /// given path is included, but its ancestors are not.
+    pub fn set_search_stop_path<P: Into<PathBuf>>(&mut self, path: P) {
+        self.inner.set_search_stop_path(path)
+    }
+
+    /// Switches the working directory to [`std::env::current_dir`]
+    ///
+    /// There is not a need to also call [`Self::reload_rooted_at`].
+    pub fn reload_cwd(&mut self) -> CargoResult<()> {
+        self.inner.reload_cwd(self.nightly_features_allowed)
+    }
+
+    /// Reloads on-disk configuration values, starting at the given path and
+    /// walking up its ancestors.
+    pub fn reload_rooted_at<P: AsRef<Path>>(&mut self, path: P) -> CargoResult<()> {
+        self.inner
+            .reload_rooted_at(path, self.nightly_features_allowed)
+    }
+
+    /// The current working directory.
+    pub fn cwd(&self) -> &Path {
+        self.inner.cwd()
+    }
+
+    /// The `target` output directory to use.
+    ///
+    /// Returns `None` if the user has not chosen an explicit directory.
+    ///
+    /// Callers should prefer [`Workspace::target_dir`] instead.
+    pub fn target_dir(&self) -> CargoResult<Option<Filesystem>> {
+        self.inner.target_dir(self)
+    }
+
+    /// The directory to use for intermediate build artifacts.
+    ///
+    /// Callers should prefer [`Workspace::build_dir`] instead.
+    pub fn build_dir(&self, workspace_manifest_path: &Path) -> CargoResult<Option<Filesystem>> {
+        self.inner.build_dir(self, workspace_manifest_path)
+    }
+
+    /// The directory to use for intermediate build artifacts.
+    ///
+    /// Callers should prefer [`Workspace::build_dir`] instead.
+    pub fn custom_build_dir(
+        &self,
+        val: &ConfigRelativePath,
+        workspace_manifest_path: &Path,
+    ) -> CargoResult<Filesystem> {
+        self.inner
+            .custom_build_dir(self, val, workspace_manifest_path)
+    }
+
+    /// This is a helper for getting a CV from a file or env var.
+    pub(crate) fn get_cv_with_env(&self, key: &ConfigKey) -> CargoResult<Option<CV>> {
+        self.inner.get_cv_with_env_in_view(key, self.view)
+    }
+
+    /// Helper primarily for testing.
+    pub fn set_env(&mut self, env: HashMap<String, String>) {
+        self.inner.set_env(env)
+    }
+
+    /// Returns all environment variables as an iterator,
+    /// keeping only entries where both the key and value are valid UTF-8.
+    pub(crate) fn env(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.inner.env()
+    }
+
+    /// Get the value of environment variable `key` through the snapshot in
+    /// [`GlobalContext`].
+    ///
+    /// This can be used similarly to [`std::env::var`].
+    pub fn get_env(&self, key: impl AsRef<OsStr>) -> CargoResult<&str> {
+        self.inner.get_env(key)
+    }
+
+    /// Get the value of environment variable `key` through the snapshot in
+    /// [`GlobalContext`].
+    ///
+    /// This can be used similarly to [`std::env::var_os`].
+    pub fn get_env_os(&self, key: impl AsRef<OsStr>) -> Option<&OsStr> {
+        self.inner.get_env_os(key)
+    }
+
+    /// Get a string config value.
+    ///
+    /// See `get` for more details.
+    pub fn get_string(&self, key: &str) -> CargoResult<OptValue<String>> {
+        self.inner.get_string(key)
+    }
+
+    /// Update the instance based on settings typically passed in on
+    /// the command-line.
+    ///
+    /// This may also load the config from disk if it hasn't already been
+    /// loaded.
+    pub fn configure(
+        &mut self,
+        verbose: u32,
+        quiet: bool,
+        color: Option<&str>,
+        frozen: bool,
+        locked: bool,
+        offline: bool,
+        target_dir: &Option<PathBuf>,
+        unstable_flags: &[String],
+        cli_config: &[String],
+    ) -> CargoResult<()> {
+        self.inner.configure(
+            verbose,
+            quiet,
+            color,
+            frozen,
+            locked,
+            offline,
+            target_dir,
+            unstable_flags,
+            cli_config,
+            self.nightly_features_allowed,
+        )
+    }
+
+    pub fn cli_unstable(&self) -> &CliUnstable {
+        self.inner.cli_unstable()
+    }
+
+    pub fn extra_verbose(&self) -> bool {
+        self.inner.extra_verbose()
+    }
+
+    pub fn should_embed_metadata(&self) -> bool {
+        self.inner.should_embed_metadata()
+    }
+
+    pub fn network_allowed(&self) -> bool {
+        self.inner.network_allowed()
+    }
+
+    pub fn offline_flag(&self) -> Option<&'static str> {
+        self.inner.offline_flag()
+    }
+
+    pub fn set_locked(&mut self, locked: bool) {
+        self.inner.set_locked(locked)
+    }
+
+    pub fn lock_update_allowed(&self) -> bool {
+        self.inner.lock_update_allowed()
+    }
+
+    pub fn locked_flag(&self) -> Option<&'static str> {
+        self.inner.locked_flag()
+    }
+
+    /// Loads configuration from the filesystem.
+    pub fn load_values(&self) -> CargoResult<HashMap<String, ConfigValue>> {
+        self.inner.load_values()
+    }
+
+    /// Like [`load_values`](GlobalContext::load_values) but without merging config values.
+    ///
+    /// This is primarily crafted for `cargo config` command.
+    pub(crate) fn load_values_unmerged(&self) -> CargoResult<Vec<ConfigValue>> {
+        self.inner.load_values_unmerged()
+    }
+
+    /// Parses the CLI config args and returns them as a table.
+    pub(crate) fn cli_args_as_table(&self) -> CargoResult<ConfigValue> {
+        self.inner.cli_args_as_table()
+    }
+
+    /// Gets the index for a registry.
+    pub fn get_registry_index(&self, registry: &str) -> CargoResult<Url> {
+        self.inner.get_registry_index(registry)
+    }
+
+    /// Returns an error if `registry.index` is set.
+    pub fn check_registry_index_not_set(&self) -> CargoResult<()> {
+        self.inner.check_registry_index_not_set()
+    }
+
+    /// Loads credentials config from the credentials file, if present.
+    ///
+    /// The credentials are loaded into a separate field to enable them
+    /// to be lazy-loaded after the main configuration has been loaded,
+    /// without requiring `mut` access to the [`GlobalContext`].
+    ///
+    /// If the credentials are already loaded, this function does nothing.
+    pub fn load_credentials(&self) -> CargoResult<()> {
+        self.inner.load_credentials()
+    }
+
+    /// Get the `paths` overrides config value.
+    pub fn paths_overrides(&self) -> CargoResult<OptValue<Vec<(String, Definition)>>> {
+        self.inner.paths_overrides()
+    }
+
+    pub fn jobserver_from_env(&self) -> Option<&jobserver::Client> {
+        self.inner.jobserver_from_env()
+    }
+
+    pub fn http(&self) -> CargoResult<&Mutex<Easy>> {
+        self.inner.http(self)
+    }
+
+    pub fn http_async(&self) -> CargoResult<&http_async::Client> {
+        self.inner.http_async(self)
+    }
+
+    pub fn http_config(&self) -> CargoResult<&CargoHttpConfig> {
+        self.inner.http_config(self)
+    }
+
+    pub fn future_incompat_config(&self) -> CargoResult<&CargoFutureIncompatConfig> {
+        self.inner.future_incompat_config()
+    }
+
+    pub fn net_config(&self) -> CargoResult<&CargoNetConfig> {
+        self.inner.net_config()
+    }
+
+    pub fn build_config(&self) -> CargoResult<&CargoBuildConfig> {
+        self.inner.build_config()
+    }
+
+    pub fn progress_config(&self) -> &ProgressConfig {
+        self.inner.progress_config()
+    }
+
+    /// Get the env vars from the config `[env]` table which
+    /// are `force = true` or don't exist in the env snapshot [`GlobalContext::get_env`].
+    pub fn env_config(&self) -> CargoResult<&Arc<HashMap<String, OsString>>> {
+        self.inner.env_config()
+    }
+
+    /// This is used to validate the `term` table has valid syntax.
+    ///
+    /// This is necessary because loading the term settings happens very
+    /// early, and in some situations (like `cargo version`) we don't want to
+    /// fail if there are problems with the config file.
+    pub fn validate_term_config(&self) -> CargoResult<()> {
+        self.inner.validate_term_config()
+    }
+
+    /// Returns a list of `target.'cfg()'` tables.
+    ///
+    /// The list is sorted by the table name.
+    pub fn target_cfgs(&self) -> CargoResult<&Vec<(String, TargetCfgConfig)>> {
+        self.inner.target_cfgs(self)
+    }
+
+    pub fn doc_extern_map(&self) -> CargoResult<&RustdocExternMap> {
+        self.inner.doc_extern_map()
+    }
+
+    /// Returns true if the `[target]` table should be applied to host targets.
+    pub fn target_applies_to_host(&self) -> CargoResult<bool> {
+        self.inner.target_applies_to_host(self)
+    }
+
+    /// Returns the `[host]` table definition for the given target triple.
+    pub fn host_cfg_triple(&self, target: &str) -> CargoResult<TargetConfig> {
+        self.inner.host_cfg_triple(self, target)
+    }
+
+    /// Returns the `[target]` table definition for the given target triple.
+    pub fn target_cfg_triple(&self, target: &str) -> CargoResult<TargetConfig> {
+        self.inner.target_cfg_triple(self, target)
+    }
+
+    /// Returns the cached [`SourceId`] corresponding to the main repository.
+    ///
+    /// This is the main cargo registry by default, but it can be overridden in
+    /// a `.cargo/config.toml`.
+    pub fn crates_io_source_id(&self) -> CargoResult<SourceId> {
+        self.inner.crates_io_source_id()
+    }
+
+    pub fn invocation_instant(&self) -> Instant {
+        self.inner.invocation_instant()
+    }
+
+    /// Returns the wall-clock time of this cargo invocation.
+    ///
+    /// See the [`invocation_time`] field doc for details.
+    ///
+    /// [`invocation_time`]: GlobalContext::invocation_time
+    pub fn invocation_time(&self) -> jiff::Timestamp {
+        self.inner.invocation_time()
+    }
+
+    /// Retrieves a config variable.
+    ///
+    /// This supports most serde `Deserialize` types. Examples:
+    ///
+    /// ```rust,ignore
+    /// let v: Option<u32> = config.get("some.nested.key")?;
+    /// let v: Option<MyStruct> = config.get("some.key")?;
+    /// let v: Option<HashMap<String, MyStruct>> = config.get("foo")?;
+    /// ```
+    ///
+    /// The key may be a dotted key, but this does NOT support TOML key
+    /// quoting. Avoid key components that may have dots. For example,
+    /// `foo.'a.b'.bar" does not work if you try to fetch `foo.'a.b'". You can
+    /// fetch `foo` if it is a map, though.
+    pub fn get<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+        let d = Deserializer {
+            gctx: &self.inner,
+            key: ConfigKey::from_str(key),
+            env_prefix_ok: true,
+            config_view: self.view,
+        };
+        T::deserialize(d).map_err(|e| e.into())
+    }
+
+    /// Retreive a config variable for the purpose of build-std.
+    /// Checks the builtin config file too if needed, and will error if its not present.
+    pub fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+        self.inner.get_buildstd(key)
+    }
+
+    /// Obtain a [`Path`] from a [`Filesystem`], verifying that the
+    /// appropriate lock is already currently held.
+    ///
+    /// Locks are usually acquired via [`GlobalContext::acquire_package_cache_lock`]
+    /// or [`GlobalContext::try_acquire_package_cache_lock`].
+    #[track_caller]
+    pub fn assert_package_cache_locked<'a>(
+        &self,
+        mode: CacheLockMode,
+        f: &'a Filesystem,
+    ) -> &'a Path {
+        self.inner.assert_package_cache_locked(mode, f)
+    }
+
+    /// Acquires a lock on the global "package cache", blocking if another
+    /// cargo holds the lock.
+    ///
+    /// See [`crate::util::cache_lock`] for an in-depth discussion of locking
+    /// and lock modes.
+    pub fn acquire_package_cache_lock(&self, mode: CacheLockMode) -> CargoResult<CacheLock<'_>> {
+        self.inner.acquire_package_cache_lock(self, mode)
+    }
+
+    /// Acquires a lock on the global "package cache", returning `None` if
+    /// another cargo holds the lock.
+    ///
+    /// See [`crate::util::cache_lock`] for an in-depth discussion of locking
+    /// and lock modes.
+    pub fn try_acquire_package_cache_lock(
+        &self,
+        mode: CacheLockMode,
+    ) -> CargoResult<Option<CacheLock<'_>>> {
+        self.inner.try_acquire_package_cache_lock(self, mode)
+    }
+
+    /// Returns a reference to the shared [`GlobalCacheTracker`].
+    ///
+    /// The package cache lock must be held to call this function (and to use
+    /// it in general).
+    pub fn global_cache_tracker(&self) -> CargoResult<MutexGuard<'_, GlobalCacheTracker>> {
+        self.inner.global_cache_tracker(self)
+    }
+
+    /// Returns a reference to the shared [`DeferredGlobalLastUse`].
+    pub fn deferred_global_last_use(&self) -> CargoResult<MutexGuard<'_, DeferredGlobalLastUse>> {
+        self.inner.deferred_global_last_use()
+    }
+
+    /// Get the global [`WarningHandling`] configuration.
+    pub fn warning_handling(&self) -> CargoResult<WarningHandling> {
+        self.inner.warning_handling()
+    }
+
+    pub fn ws_roots(&self) -> MutexGuard<'_, HashMap<PathBuf, WorkspaceRootConfig>> {
+        self.inner.ws_roots()
+    }
 }
 
 /// The immutable (or interior-mutable) core of the GlobalContext
@@ -353,13 +875,6 @@ struct GlobalContextInner {
 }
 
 impl GlobalContextInner {
-    /// Creates a new config instance.
-    ///
-    /// This is typically used for tests or other special cases. `default` is
-    /// preferred otherwise.
-    ///
-    /// This does only minimal initialization. In particular, it does not load
-    /// any config files from disk. Those will be loaded lazily as-needed.
     fn new(mut shell: Shell, cwd: PathBuf, homedir: PathBuf) -> GlobalContextInner {
         static GLOBAL_JOBSERVER: LazyLock<CargoResult<Option<jobserver::Client>>> = LazyLock::new(
             || {
@@ -462,11 +977,7 @@ impl GlobalContextInner {
         }
     }
 
-    /// Creates a new instance, with all default settings.
-    ///
-    /// This does only minimal initialization. In particular, it does not load
-    /// any config files from disk. Those will be loaded lazily as-needed.
-    pub fn default() -> CargoResult<GlobalContextInner> {
+    fn default() -> CargoResult<GlobalContextInner> {
         let shell = Shell::new();
         let cwd =
             env::current_dir().context("couldn't get the current directory of the process")?;
@@ -476,18 +987,14 @@ impl GlobalContextInner {
                  This probably means that $HOME was not set."
             )
         })?;
-        Ok(GlobalContext::new(shell, cwd, homedir))
+        Ok(GlobalContextInner::new(shell, cwd, homedir))
     }
 
-    /// Gets the user's Cargo home directory (OS-dependent).
-    pub fn home(&self) -> &Filesystem {
+    fn home(&self) -> &Filesystem {
         &self.home_path
     }
 
-    /// Returns a path to display to the user with the location of their home
-    /// config file (to only be used for displaying a diagnostics suggestion,
-    /// such as recommending where to add a config value).
-    pub fn diagnostic_home_config(&self) -> String {
+    fn diagnostic_home_config(&self) -> String {
         let home = self.home_path.as_path_unlocked();
         let path = match self.get_file_path(home, "config", false) {
             Ok(Some(existing_path)) => existing_path,
@@ -496,61 +1003,45 @@ impl GlobalContextInner {
         path.to_string_lossy().to_string()
     }
 
-    /// Gets the Cargo Git directory (`<cargo_home>/git`).
-    pub fn git_path(&self) -> Filesystem {
+    fn git_path(&self) -> Filesystem {
         self.home_path.join("git")
     }
 
-    /// Gets the directory of code sources Cargo checkouts from Git bare repos
-    /// (`<cargo_home>/git/checkouts`).
-    pub fn git_checkouts_path(&self) -> Filesystem {
+    fn git_checkouts_path(&self) -> Filesystem {
         self.git_path().join("checkouts")
     }
 
-    /// Gets the directory for all Git bare repos Cargo clones
-    /// (`<cargo_home>/git/db`).
-    pub fn git_db_path(&self) -> Filesystem {
+    fn git_db_path(&self) -> Filesystem {
         self.git_path().join("db")
     }
 
-    /// Gets the Cargo base directory for all registry information (`<cargo_home>/registry`).
-    pub fn registry_base_path(&self) -> Filesystem {
+    fn registry_base_path(&self) -> Filesystem {
         self.home_path.join("registry")
     }
 
-    /// Gets the Cargo registry index directory (`<cargo_home>/registry/index`).
-    pub fn registry_index_path(&self) -> Filesystem {
+    fn registry_index_path(&self) -> Filesystem {
         self.registry_base_path().join("index")
     }
 
-    /// Gets the Cargo registry cache directory (`<cargo_home>/registry/cache`).
-    pub fn registry_cache_path(&self) -> Filesystem {
+    fn registry_cache_path(&self) -> Filesystem {
         self.registry_base_path().join("cache")
     }
 
-    /// Gets the Cargo registry source directory (`<cargo_home>/registry/src`).
-    pub fn registry_source_path(&self) -> Filesystem {
+    fn registry_source_path(&self) -> Filesystem {
         self.registry_base_path().join("src")
     }
 
-    /// Gets the default Cargo registry.
-    pub fn default_registry(&self) -> CargoResult<Option<String>> {
+    fn default_registry(&self) -> CargoResult<Option<String>> {
         Ok(self
             .get_string("registry.default")?
             .map(|registry| registry.val))
     }
 
-    /// Gets a reference to the shell, e.g., for writing error messages.
-    pub fn shell(&self) -> MutexGuard<'_, Shell> {
+    fn shell(&self) -> MutexGuard<'_, Shell> {
         self.shell.lock().unwrap()
     }
 
-    /// Assert [`Self::shell`] is not in use
-    ///
-    /// Testing might not identify bugs with two accesses to `shell` at once
-    /// due to conditional logic,
-    /// so place this outside of the conditions to catch these bugs in more situations.
-    pub fn debug_assert_shell_not_borrowed(&self) {
+    fn debug_assert_shell_not_borrowed(&self) {
         if cfg!(debug_assertions) {
             match self.shell.try_lock() {
                 Ok(_) | Err(std::sync::TryLockError::Poisoned(_)) => (),
@@ -559,15 +1050,17 @@ impl GlobalContextInner {
         }
     }
 
-    /// Gets the path to the `rustdoc` executable.
-    pub fn rustdoc(&self) -> CargoResult<&Path> {
+    fn rustdoc(&self) -> CargoResult<&Path> {
         self.rustdoc
             .try_borrow_with(|| Ok(self.get_tool(Tool::Rustdoc, &self.build_config()?.rustdoc)))
             .map(AsRef::as_ref)
     }
 
-    /// Gets the path to the `rustc` executable.
-    pub fn load_global_rustc(&self, ws: Option<&Workspace<'_>>) -> CargoResult<Rustc> {
+    fn load_global_rustc(
+        &self,
+        gctx: &GlobalContext,
+        ws: Option<&Workspace<'_>>,
+    ) -> CargoResult<Rustc> {
         let cache_location =
             ws.map(|ws| ws.build_dir().join(".rustc_info.json").into_path_unlocked());
         let wrapper = self.maybe_get_tool("rustc_wrapper", &self.build_config()?.rustc_wrapper);
@@ -591,12 +1084,11 @@ impl GlobalContextInner {
             } else {
                 None
             },
-            self,
+            gctx,
         )
     }
 
-    /// Gets the path to the `cargo` executable.
-    pub fn cargo_exe(&self) -> CargoResult<&Path> {
+    fn cargo_exe(&self) -> CargoResult<&Path> {
         self.cargo_exe
             .try_borrow_with(|| {
                 let from_env = || -> CargoResult<PathBuf> {
@@ -659,39 +1151,25 @@ impl GlobalContextInner {
             .map(AsRef::as_ref)
     }
 
-    /// Which package sources have been updated, used to ensure it is only done once.
-    pub fn updated_sources(&self) -> MutexGuard<'_, HashSet<SourceId>> {
+    fn updated_sources(&self) -> MutexGuard<'_, HashSet<SourceId>> {
         self.updated_sources.lock().unwrap()
     }
 
-    /// Cached credentials from credential providers or configuration.
-    pub fn credential_cache(&self) -> MutexGuard<'_, HashMap<CanonicalUrl, CredentialCacheValue>> {
+    fn credential_cache(&self) -> MutexGuard<'_, HashMap<CanonicalUrl, CredentialCacheValue>> {
         self.credential_cache.lock().unwrap()
     }
 
-    /// Cache of already parsed registries from the `[registries]` table.
-    pub(crate) fn registry_config(
-        &self,
-    ) -> MutexGuard<'_, HashMap<SourceId, Option<RegistryConfig>>> {
+    fn registry_config(&self) -> MutexGuard<'_, HashMap<SourceId, Option<RegistryConfig>>> {
         self.registry_config.lock().unwrap()
     }
 
-    /// Gets all config values from disk.
-    ///
-    /// This will lazy-load the values as necessary. Callers are responsible
-    /// for checking environment variables. Callers outside of the `config`
-    /// module should avoid using this.
-    pub fn values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
+    fn values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
         self.values
             .try_borrow_with(|| self.load_values_from(&self.cwd))
             .map(|c| &c.user_config)
     }
 
-    /// Gets all build-std config values from disk.
-    ///
-    /// This will lazy-load the values as necessary, returning an error if the build-std source
-    /// cannot be found.
-    pub fn build_std_values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
+    fn build_std_values(&self) -> CargoResult<&HashMap<String, ConfigValue>> {
         self.values
             .try_borrow_with(|| self.load_values_from(&self.cwd))
             .map(|c| {
@@ -702,20 +1180,14 @@ impl GlobalContextInner {
             .flatten()
     }
 
-    /// Gets a mutable copy of the on-disk config values.
-    ///
-    /// This requires the config values to already have been loaded. This
-    /// currently only exists for `cargo vendor` to remove the `source`
-    /// entries. This doesn't respect environment variables. You should avoid
-    /// using this if possible.
-    pub fn values_mut(&mut self) -> CargoResult<&mut HashMap<String, ConfigValue>> {
+    fn values_mut(&mut self) -> CargoResult<&mut HashMap<String, ConfigValue>> {
         let _ = self.values()?;
         let values = self.values.get_mut().expect("already loaded config values");
         Ok(&mut values.user_config)
     }
 
     // Note: this is used by RLS, not Cargo.
-    pub fn set_values(&self, values: HashMap<String, ConfigValue>) -> CargoResult<()> {
+    fn set_values(&self, values: HashMap<String, ConfigValue>) -> CargoResult<()> {
         if self.values.get().is_some() {
             bail!("config values already found")
         }
@@ -729,18 +1201,13 @@ impl GlobalContextInner {
         }
     }
 
-    /// Sets the path where ancestor config file searching will stop. The
-    /// given path is included, but its ancestors are not.
-    pub fn set_search_stop_path<P: Into<PathBuf>>(&mut self, path: P) {
+    fn set_search_stop_path<P: Into<PathBuf>>(&mut self, path: P) {
         let path = path.into();
         debug_assert!(self.cwd.starts_with(&path));
         self.search_stop_path = Some(path);
     }
 
-    /// Switches the working directory to [`std::env::current_dir`]
-    ///
-    /// There is not a need to also call [`Self::reload_rooted_at`].
-    pub fn reload_cwd(&mut self) -> CargoResult<()> {
+    fn reload_cwd(&mut self, nightly_features_allowed: bool) -> CargoResult<()> {
         let cwd =
             env::current_dir().context("couldn't get the current directory of the process")?;
         let homedir = homedir(&cwd).ok_or_else(|| {
@@ -752,31 +1219,27 @@ impl GlobalContextInner {
 
         self.cwd = cwd;
         self.home_path = Filesystem::new(homedir);
-        self.reload_rooted_at(self.cwd.clone())?;
+        self.reload_rooted_at(self.cwd.clone(), nightly_features_allowed)?;
         Ok(())
     }
 
-    /// Reloads on-disk configuration values, starting at the given path and
-    /// walking up its ancestors.
-    pub fn reload_rooted_at<P: AsRef<Path>>(&mut self, path: P) -> CargoResult<()> {
+    fn reload_rooted_at<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+        nightly_features_allowed: bool,
+    ) -> CargoResult<()> {
         let values = self.load_values_from(path.as_ref())?;
         self.values.replace(values);
         self.merge_cli_args()?;
-        self.load_unstable_flags_from_config()?;
+        self.load_unstable_flags_from_config(nightly_features_allowed)?;
         Ok(())
     }
 
-    /// The current working directory.
-    pub fn cwd(&self) -> &Path {
+    fn cwd(&self) -> &Path {
         &self.cwd
     }
 
-    /// The `target` output directory to use.
-    ///
-    /// Returns `None` if the user has not chosen an explicit directory.
-    ///
-    /// Callers should prefer [`Workspace::target_dir`] instead.
-    pub fn target_dir(&self) -> CargoResult<Option<Filesystem>> {
+    fn target_dir(&self, gctx: &GlobalContext) -> CargoResult<Option<Filesystem>> {
         if let Some(dir) = &self.target_dir {
             Ok(Some(dir.clone()))
         } else if let Some(dir) = self.get_env_os("CARGO_TARGET_DIR") {
@@ -790,7 +1253,7 @@ impl GlobalContextInner {
 
             Ok(Some(Filesystem::new(self.cwd.join(dir))))
         } else if let Some(val) = &self.build_config()?.target_dir {
-            let path = val.resolve_path(self);
+            let path = val.resolve_path(gctx);
 
             // Check if the target directory is set to an empty string in the config.toml file.
             if val.raw_value().is_empty() {
@@ -806,22 +1269,21 @@ impl GlobalContextInner {
         }
     }
 
-    /// The directory to use for intermediate build artifacts.
-    ///
-    /// Callers should prefer [`Workspace::build_dir`] instead.
-    pub fn build_dir(&self, workspace_manifest_path: &Path) -> CargoResult<Option<Filesystem>> {
+    fn build_dir(
+        &self,
+        gctx: &GlobalContext,
+        workspace_manifest_path: &Path,
+    ) -> CargoResult<Option<Filesystem>> {
         let Some(val) = &self.build_config()?.build_dir else {
             return Ok(None);
         };
-        self.custom_build_dir(val, workspace_manifest_path)
+        self.custom_build_dir(gctx, val, workspace_manifest_path)
             .map(Some)
     }
 
-    /// The directory to use for intermediate build artifacts.
-    ///
-    /// Callers should prefer [`Workspace::build_dir`] instead.
-    pub fn custom_build_dir(
+    fn custom_build_dir(
         &self,
+        gctx: &GlobalContext,
         val: &ConfigRelativePath,
         workspace_manifest_path: &Path,
     ) -> CargoResult<Filesystem> {
@@ -857,7 +1319,7 @@ impl GlobalContextInner {
             .collect_vec();
 
         let path = val
-            .resolve_templated_path(self, replacements)
+            .resolve_templated_path(gctx, replacements)
             .map_err(|e| match e {
                 path::ResolveTemplateError::UnexpectedVariable {
                     variable,
@@ -968,8 +1430,7 @@ impl GlobalContextInner {
         Ok(Some(val.clone()))
     }
 
-    /// This is a helper for getting a CV from a file or env var.
-    pub(crate) fn get_cv_with_env(&self, key: &ConfigKey) -> CargoResult<Option<CV>> {
+    fn get_cv_with_env(&self, key: &ConfigKey) -> CargoResult<Option<CV>> {
         // Determine if value comes from env, cli, or file, and merge env if
         // possible.
         let cv = self.get_cv(key)?;
@@ -1058,14 +1519,11 @@ impl GlobalContextInner {
         }
     }
 
-    /// Helper primarily for testing.
-    pub fn set_env(&mut self, env: HashMap<String, String>) {
+    fn set_env(&mut self, env: HashMap<String, String>) {
         self.env = Env::from_map(env);
     }
 
-    /// Returns all environment variables as an iterator,
-    /// keeping only entries where both the key and value are valid UTF-8.
-    pub(crate) fn env(&self) -> impl Iterator<Item = (&str, &str)> {
+    fn env(&self) -> impl Iterator<Item = (&str, &str)> {
         self.env.iter_str()
     }
 
@@ -1096,19 +1554,11 @@ impl GlobalContextInner {
         }
     }
 
-    /// Get the value of environment variable `key` through the snapshot in
-    /// [`GlobalContext`].
-    ///
-    /// This can be used similarly to [`std::env::var`].
-    pub fn get_env(&self, key: impl AsRef<OsStr>) -> CargoResult<&str> {
+    fn get_env(&self, key: impl AsRef<OsStr>) -> CargoResult<&str> {
         self.env.get_env(key)
     }
 
-    /// Get the value of environment variable `key` through the snapshot in
-    /// [`GlobalContext`].
-    ///
-    /// This can be used similarly to [`std::env::var_os`].
-    pub fn get_env_os(&self, key: impl AsRef<OsStr>) -> Option<&OsStr> {
+    fn get_env_os(&self, key: impl AsRef<OsStr>) -> Option<&OsStr> {
         self.env.get_env_os(key)
     }
 
@@ -1143,10 +1593,7 @@ impl GlobalContextInner {
         }
     }
 
-    /// Get a string config value.
-    ///
-    /// See `get` for more details.
-    pub fn get_string(&self, key: &str) -> CargoResult<OptValue<String>> {
+    fn get_string(&self, key: &str) -> CargoResult<OptValue<String>> {
         self.get::<OptValue<String>>(key)
     }
 
@@ -1240,12 +1687,7 @@ impl GlobalContextInner {
             .map_err(|e| anyhow!("invalid configuration for key `{}`\n{}", key, e))
     }
 
-    /// Update the instance based on settings typically passed in on
-    /// the command-line.
-    ///
-    /// This may also load the config from disk if it hasn't already been
-    /// loaded.
-    pub fn configure(
+    fn configure(
         &mut self,
         verbose: u32,
         quiet: bool,
@@ -1256,10 +1698,11 @@ impl GlobalContextInner {
         target_dir: &Option<PathBuf>,
         unstable_flags: &[String],
         cli_config: &[String],
+        nightly_features_allowed: bool,
     ) -> CargoResult<()> {
         for warning in self
             .unstable_flags
-            .parse(unstable_flags, self.nightly_features_allowed)?
+            .parse(unstable_flags, nightly_features_allowed)?
         {
             self.shell().warn(warning)?;
         }
@@ -1273,7 +1716,7 @@ impl GlobalContextInner {
             self.merge_cli_args()?;
         }
 
-        self.load_unstable_flags_from_config()?;
+        self.load_unstable_flags_from_config(nightly_features_allowed)?;
 
         // Ignore errors in the configuration files. We don't want basic
         // commands like `cargo version` to error out due to config file
@@ -1327,10 +1770,13 @@ impl GlobalContextInner {
         Ok(())
     }
 
-    fn load_unstable_flags_from_config(&mut self) -> CargoResult<()> {
+    fn load_unstable_flags_from_config(
+        &mut self,
+        nightly_features_allowed: bool,
+    ) -> CargoResult<()> {
         // If nightly features are enabled, allow setting Z-flags from config
         // using the `unstable` table. Ignore that block otherwise.
-        if self.nightly_features_allowed {
+        if nightly_features_allowed {
             self.unstable_flags = self
                 .get::<Option<CliUnstable>>("unstable")?
                 .unwrap_or_default();
@@ -1346,15 +1792,15 @@ impl GlobalContextInner {
         Ok(())
     }
 
-    pub fn cli_unstable(&self) -> &CliUnstable {
+    fn cli_unstable(&self) -> &CliUnstable {
         &self.unstable_flags
     }
 
-    pub fn extra_verbose(&self) -> bool {
+    fn extra_verbose(&self) -> bool {
         self.extra_verbose
     }
 
-    pub fn should_embed_metadata(&self) -> bool {
+    fn should_embed_metadata(&self) -> bool {
         match self.cli_unstable().embed_metadata {
             EmbedMetadata::Embed => true,
             EmbedMetadata::DoNotEmbed => false,
@@ -1362,11 +1808,11 @@ impl GlobalContextInner {
         }
     }
 
-    pub fn network_allowed(&self) -> bool {
+    fn network_allowed(&self) -> bool {
         !self.offline_flag().is_some()
     }
 
-    pub fn offline_flag(&self) -> Option<&'static str> {
+    fn offline_flag(&self) -> Option<&'static str> {
         if self.frozen {
             Some("--frozen")
         } else if self.offline {
@@ -1376,15 +1822,15 @@ impl GlobalContextInner {
         }
     }
 
-    pub fn set_locked(&mut self, locked: bool) {
+    fn set_locked(&mut self, locked: bool) {
         self.locked = locked;
     }
 
-    pub fn lock_update_allowed(&self) -> bool {
+    fn lock_update_allowed(&self) -> bool {
         !self.locked_flag().is_some()
     }
 
-    pub fn locked_flag(&self) -> Option<&'static str> {
+    fn locked_flag(&self) -> Option<&'static str> {
         if self.frozen {
             Some("--frozen")
         } else if self.locked {
@@ -1394,15 +1840,11 @@ impl GlobalContextInner {
         }
     }
 
-    /// Loads configuration from the filesystem.
-    pub fn load_values(&self) -> CargoResult<HashMap<String, ConfigValue>> {
+    fn load_values(&self) -> CargoResult<HashMap<String, ConfigValue>> {
         self.load_values_from(&self.cwd).map(|c| c.user_config)
     }
 
-    /// Like [`load_values`](GlobalContext::load_values) but without merging config values.
-    ///
-    /// This is primarily crafted for `cargo config` command.
-    pub(crate) fn load_values_unmerged(&self) -> CargoResult<Vec<ConfigValue>> {
+    fn load_values_unmerged(&self) -> CargoResult<Vec<ConfigValue>> {
         let mut result = Vec::new();
         let mut seen = HashSet::default();
         let home = self.home_path.clone().into_path_unlocked();
@@ -1462,7 +1904,7 @@ impl GlobalContextInner {
         let value = self.load_buildstd_file(std_path);
         let std_cfg = match value {
             Ok(value) => {
-                let mut std_cfg = CV::Table(HashMap::new(), Definition::BuiltIn);
+                let mut std_cfg = CV::Table(HashMap::default(), Definition::BuiltIn);
                 std_cfg.merge(value, false).with_context(|| {
                     format!(
                         "failed to merge std configuration at `{}`",
@@ -1512,7 +1954,12 @@ impl GlobalContextInner {
     /// Loads a build-std config value from the standard library source. Does not follow include
     /// directives.
     fn load_buildstd_file(&self, path: &Path) -> CargoResult<ConfigValue> {
-        self._load_file(path, &mut HashSet::new(), false, WhyLoad::BuildStdConfig)
+        self._load_file(
+            path,
+            &mut HashSet::default(),
+            false,
+            WhyLoad::BuildStdConfig,
+        )
     }
 
     /// Loads a config value from a path with options.
@@ -1688,8 +2135,7 @@ impl GlobalContextInner {
         Ok(includes)
     }
 
-    /// Parses the CLI config args and returns them as a table.
-    pub(crate) fn cli_args_as_table(&self) -> CargoResult<ConfigValue> {
+    fn cli_args_as_table(&self) -> CargoResult<ConfigValue> {
         let mut loaded_args = CV::Table(HashMap::default(), Definition::Cli(None));
         let Some(cli_args) = &self.cli_config else {
             return Ok(loaded_args);
@@ -1860,8 +2306,7 @@ impl GlobalContextInner {
         Ok(())
     }
 
-    /// Gets the index for a registry.
-    pub fn get_registry_index(&self, registry: &str) -> CargoResult<Url> {
+    fn get_registry_index(&self, registry: &str) -> CargoResult<Url> {
         RegistryName::new(registry)?;
         if let Some(index) = self.get_string(&format!("registries.{}.index", registry))? {
             self.resolve_registry_index(&index).with_context(|| {
@@ -1878,8 +2323,7 @@ impl GlobalContextInner {
         }
     }
 
-    /// Returns an error if `registry.index` is set.
-    pub fn check_registry_index_not_set(&self) -> CargoResult<()> {
+    fn check_registry_index_not_set(&self) -> CargoResult<()> {
         if self.get_string("registry.index")?.is_some() {
             bail!(
                 "the `registry.index` config value is no longer supported\n\
@@ -1904,14 +2348,7 @@ impl GlobalContextInner {
         Ok(url)
     }
 
-    /// Loads credentials config from the credentials file, if present.
-    ///
-    /// The credentials are loaded into a separate field to enable them
-    /// to be lazy-loaded after the main configuration has been loaded,
-    /// without requiring `mut` access to the [`GlobalContext`].
-    ///
-    /// If the credentials are already loaded, this function does nothing.
-    pub fn load_credentials(&self) -> CargoResult<()> {
+    fn load_credentials(&self) -> CargoResult<()> {
         if self.credential_values.filled() {
             return Ok(());
         }
@@ -1975,7 +2412,9 @@ impl GlobalContextInner {
                 Some(path)
             }
 
-            None => from_config.as_ref().map(|p| p.resolve_program(self)),
+            None => from_config
+                .as_ref()
+                .map(|p| self.string_to_path(&p.value().val, &p.value().definition)),
         }
     }
 
@@ -2038,8 +2477,7 @@ impl GlobalContextInner {
             .unwrap_or_else(|| PathBuf::from(tool_str))
     }
 
-    /// Get the `paths` overrides config value.
-    pub fn paths_overrides(&self) -> CargoResult<OptValue<Vec<(String, Definition)>>> {
+    fn paths_overrides(&self) -> CargoResult<OptValue<Vec<(String, Definition)>>> {
         let key = ConfigKey::from_str("paths");
         // paths overrides cannot be set via env config, so use get_cv here.
         match self.get_cv(&key)? {
@@ -2058,61 +2496,59 @@ impl GlobalContextInner {
         }
     }
 
-    pub fn jobserver_from_env(&self) -> Option<&jobserver::Client> {
+    fn jobserver_from_env(&self) -> Option<&jobserver::Client> {
         self.jobserver
     }
 
-    pub fn http(&self) -> CargoResult<&Mutex<Easy>> {
+    fn http(&self, gctx: &GlobalContext) -> CargoResult<&Mutex<Easy>> {
         let http = self
             .easy
-            .try_borrow_with(|| http_handle(self).map(Into::into))?;
+            .try_borrow_with(|| http_handle(gctx).map(Into::into))?;
         {
             let mut http = http.lock().unwrap();
             http.reset();
-            let timeout = configure_http_handle(self, &mut http)?;
+            let timeout = configure_http_handle(gctx, &mut http)?;
             timeout.configure(&mut http)?;
         }
         Ok(http)
     }
 
-    pub fn http_async(&self) -> CargoResult<&http_async::Client> {
+    fn http_async(&self, gctx: &GlobalContext) -> CargoResult<&http_async::Client> {
         self.http_async.try_borrow_with(|| {
-            let handle_config = HandleConfiguration::new(&self)?;
+            let handle_config = HandleConfiguration::new(gctx)?;
             Ok(http_async::Client::new(handle_config))
         })
     }
 
-    pub fn http_config(&self) -> CargoResult<&CargoHttpConfig> {
+    fn http_config(&self, gctx: &GlobalContext) -> CargoResult<&CargoHttpConfig> {
         self.http_config.try_borrow_with(|| {
             let mut http = self.get::<CargoHttpConfig>("http")?;
             let curl_v = curl::Version::get();
-            disables_multiplexing_for_bad_curl(curl_v.version(), &mut http, self);
+            disables_multiplexing_for_bad_curl(curl_v.version(), &mut http, gctx);
             Ok(http)
         })
     }
 
-    pub fn future_incompat_config(&self) -> CargoResult<&CargoFutureIncompatConfig> {
+    fn future_incompat_config(&self) -> CargoResult<&CargoFutureIncompatConfig> {
         self.future_incompat_config
             .try_borrow_with(|| self.get::<CargoFutureIncompatConfig>("future-incompat-report"))
     }
 
-    pub fn net_config(&self) -> CargoResult<&CargoNetConfig> {
+    fn net_config(&self) -> CargoResult<&CargoNetConfig> {
         self.net_config
             .try_borrow_with(|| self.get::<CargoNetConfig>("net"))
     }
 
-    pub fn build_config(&self) -> CargoResult<&CargoBuildConfig> {
+    fn build_config(&self) -> CargoResult<&CargoBuildConfig> {
         self.build_config
             .try_borrow_with(|| self.get::<CargoBuildConfig>("build"))
     }
 
-    pub fn progress_config(&self) -> &ProgressConfig {
+    fn progress_config(&self) -> &ProgressConfig {
         &self.progress_config
     }
 
-    /// Get the env vars from the config `[env]` table which
-    /// are `force = true` or don't exist in the env snapshot [`GlobalContext::get_env`].
-    pub fn env_config(&self) -> CargoResult<&Arc<HashMap<String, OsString>>> {
+    fn env_config(&self) -> CargoResult<&Arc<HashMap<String, OsString>>> {
         let env_config = self.env_config.try_borrow_with(|| {
             CargoResult::Ok(Arc::new({
                 let env_config = self.get::<EnvConfig>("env")?;
@@ -2155,25 +2591,17 @@ impl GlobalContextInner {
         Ok(env_config)
     }
 
-    /// This is used to validate the `term` table has valid syntax.
-    ///
-    /// This is necessary because loading the term settings happens very
-    /// early, and in some situations (like `cargo version`) we don't want to
-    /// fail if there are problems with the config file.
-    pub fn validate_term_config(&self) -> CargoResult<()> {
+    fn validate_term_config(&self) -> CargoResult<()> {
         drop(self.get::<TermConfig>("term")?);
         Ok(())
     }
 
-    /// Returns a list of `target.'cfg()'` tables.
-    ///
-    /// The list is sorted by the table name.
-    pub fn target_cfgs(&self) -> CargoResult<&Vec<(String, TargetCfgConfig)>> {
+    fn target_cfgs(&self, gctx: &GlobalContext) -> CargoResult<&Vec<(String, TargetCfgConfig)>> {
         self.target_cfgs
-            .try_borrow_with(|| target::load_target_cfgs(self))
+            .try_borrow_with(|| target::load_target_cfgs(gctx))
     }
 
-    pub fn doc_extern_map(&self) -> CargoResult<&RustdocExternMap> {
+    fn doc_extern_map(&self) -> CargoResult<&RustdocExternMap> {
         // Note: This does not support environment variables. The `Unit`
         // fundamentally does not have access to the registry name, so there is
         // nothing to query. Plumbing the name into SourceId is quite challenging.
@@ -2181,26 +2609,19 @@ impl GlobalContextInner {
             .try_borrow_with(|| self.get::<RustdocExternMap>("doc.extern-map"))
     }
 
-    /// Returns true if the `[target]` table should be applied to host targets.
-    pub fn target_applies_to_host(&self) -> CargoResult<bool> {
-        target::get_target_applies_to_host(self)
+    fn target_applies_to_host(&self, gctx: &GlobalContext) -> CargoResult<bool> {
+        target::get_target_applies_to_host(gctx)
     }
 
-    /// Returns the `[host]` table definition for the given target triple.
-    pub fn host_cfg_triple(&self, target: &str) -> CargoResult<TargetConfig> {
-        target::load_host_triple(self, target)
+    fn host_cfg_triple(&self, gctx: &GlobalContext, target: &str) -> CargoResult<TargetConfig> {
+        target::load_host_triple(gctx, target)
     }
 
-    /// Returns the `[target]` table definition for the given target triple.
-    pub fn target_cfg_triple(&self, target: &str) -> CargoResult<TargetConfig> {
-        target::load_target_triple(self, target)
+    fn target_cfg_triple(&self, gctx: &GlobalContext, target: &str) -> CargoResult<TargetConfig> {
+        target::load_target_triple(gctx, target)
     }
 
-    /// Returns the cached [`SourceId`] corresponding to the main repository.
-    ///
-    /// This is the main cargo registry by default, but it can be overridden in
-    /// a `.cargo/config.toml`.
-    pub fn crates_io_source_id(&self) -> CargoResult<SourceId> {
+    fn crates_io_source_id(&self) -> CargoResult<SourceId> {
         let source_id = self.crates_io_source_id.try_borrow_with(|| {
             self.check_registry_index_not_set()?;
             let url = CRATES_IO_INDEX.into_url().unwrap();
@@ -2209,34 +2630,15 @@ impl GlobalContextInner {
         Ok(*source_id)
     }
 
-    pub fn invocation_instant(&self) -> Instant {
+    fn invocation_instant(&self) -> Instant {
         self.invocation_instant
     }
 
-    /// Returns the wall-clock time of this cargo invocation.
-    ///
-    /// See the [`invocation_time`] field doc for details.
-    ///
-    /// [`invocation_time`]: GlobalContext::invocation_time
-    pub fn invocation_time(&self) -> jiff::Timestamp {
+    fn invocation_time(&self) -> jiff::Timestamp {
         self.invocation_time
     }
 
-    /// Retrieves a config variable.
-    ///
-    /// This supports most serde `Deserialize` types. Examples:
-    ///
-    /// ```rust,ignore
-    /// let v: Option<u32> = config.get("some.nested.key")?;
-    /// let v: Option<MyStruct> = config.get("some.key")?;
-    /// let v: Option<HashMap<String, MyStruct>> = config.get("foo")?;
-    /// ```
-    ///
-    /// The key may be a dotted key, but this does NOT support TOML key
-    /// quoting. Avoid key components that may have dots. For example,
-    /// `foo.'a.b'.bar" does not work if you try to fetch `foo.'a.b'". You can
-    /// fetch `foo` if it is a map, though.
-    pub fn get<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+    fn get<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
         let d = Deserializer {
             gctx: self,
             key: ConfigKey::from_str(key),
@@ -2246,9 +2648,7 @@ impl GlobalContextInner {
         T::deserialize(d).map_err(|e| e.into())
     }
 
-    /// Retreive a config variable for the purpose of build-std.
-    /// Checks the builtin config file too if needed, and will error if its not present.
-    pub fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
+    fn get_buildstd<'de, T: serde::de::Deserialize<'de>>(&self, key: &str) -> CargoResult<T> {
         let d = Deserializer {
             gctx: self,
             key: ConfigKey::from_str(key),
@@ -2259,18 +2659,9 @@ impl GlobalContextInner {
         T::deserialize(d).map_err(|e| e.into())
     }
 
-    /// Obtain a [`Path`] from a [`Filesystem`], verifying that the
-    /// appropriate lock is already currently held.
-    ///
-    /// Locks are usually acquired via [`GlobalContext::acquire_package_cache_lock`]
-    /// or [`GlobalContext::try_acquire_package_cache_lock`].
     #[track_caller]
     #[tracing::instrument(skip_all)]
-    pub fn assert_package_cache_locked<'a>(
-        &self,
-        mode: CacheLockMode,
-        f: &'a Filesystem,
-    ) -> &'a Path {
+    fn assert_package_cache_locked<'a>(&self, mode: CacheLockMode, f: &'a Filesystem) -> &'a Path {
         let ret = f.as_path_unlocked();
         assert!(
             self.package_cache_lock.is_locked(mode),
@@ -2281,54 +2672,46 @@ impl GlobalContextInner {
         ret
     }
 
-    /// Acquires a lock on the global "package cache", blocking if another
-    /// cargo holds the lock.
-    ///
-    /// See [`crate::util::cache_lock`] for an in-depth discussion of locking
-    /// and lock modes.
     #[tracing::instrument(skip_all)]
-    pub fn acquire_package_cache_lock(&self, mode: CacheLockMode) -> CargoResult<CacheLock<'_>> {
-        self.package_cache_lock.lock(self, mode)
+    fn acquire_package_cache_lock(
+        &self,
+        gctx: &GlobalContext,
+        mode: CacheLockMode,
+    ) -> CargoResult<CacheLock<'_>> {
+        self.package_cache_lock.lock(gctx, mode)
     }
 
-    /// Acquires a lock on the global "package cache", returning `None` if
-    /// another cargo holds the lock.
-    ///
-    /// See [`crate::util::cache_lock`] for an in-depth discussion of locking
-    /// and lock modes.
     #[tracing::instrument(skip_all)]
-    pub fn try_acquire_package_cache_lock(
+    fn try_acquire_package_cache_lock(
         &self,
+        gctx: &GlobalContext,
         mode: CacheLockMode,
     ) -> CargoResult<Option<CacheLock<'_>>> {
-        self.package_cache_lock.try_lock(self, mode)
+        self.package_cache_lock.try_lock(gctx, mode)
     }
 
-    /// Returns a reference to the shared [`GlobalCacheTracker`].
-    ///
-    /// The package cache lock must be held to call this function (and to use
-    /// it in general).
-    pub fn global_cache_tracker(&self) -> CargoResult<MutexGuard<'_, GlobalCacheTracker>> {
+    fn global_cache_tracker(
+        &self,
+        gctx: &GlobalContext,
+    ) -> CargoResult<MutexGuard<'_, GlobalCacheTracker>> {
         let tracker = self.global_cache_tracker.try_borrow_with(|| {
-            Ok::<_, anyhow::Error>(Mutex::new(GlobalCacheTracker::new(self)?))
+            Ok::<_, anyhow::Error>(Mutex::new(GlobalCacheTracker::new(gctx)?))
         })?;
         Ok(tracker.lock().unwrap())
     }
 
-    /// Returns a reference to the shared [`DeferredGlobalLastUse`].
-    pub fn deferred_global_last_use(&self) -> CargoResult<MutexGuard<'_, DeferredGlobalLastUse>> {
+    fn deferred_global_last_use(&self) -> CargoResult<MutexGuard<'_, DeferredGlobalLastUse>> {
         let deferred = self
             .deferred_global_last_use
             .try_borrow_with(|| Ok::<_, anyhow::Error>(Mutex::new(DeferredGlobalLastUse::new())))?;
         Ok(deferred.lock().unwrap())
     }
 
-    /// Get the global [`WarningHandling`] configuration.
-    pub fn warning_handling(&self) -> CargoResult<WarningHandling> {
+    fn warning_handling(&self) -> CargoResult<WarningHandling> {
         Ok(self.build_config()?.warnings.unwrap_or_default())
     }
 
-    pub fn ws_roots(&self) -> MutexGuard<'_, HashMap<PathBuf, WorkspaceRootConfig>> {
+    fn ws_roots(&self) -> MutexGuard<'_, HashMap<PathBuf, WorkspaceRootConfig>> {
         self.ws_roots.lock().unwrap()
     }
 }
@@ -2354,8 +2737,8 @@ pub fn save_credentials(
     // If 'credentials' exists, write to that for backward compatibility reasons.
     // Otherwise write to 'credentials.toml'. There's no need to print the
     // warning here, because it would already be printed at load time.
-    let home_path = gctx.home_path.clone().into_path_unlocked();
-    let filename = match gctx.get_file_path(&home_path, "credentials", false)? {
+    let home_path = gctx.inner.home_path.clone().into_path_unlocked();
+    let filename = match gctx.inner.get_file_path(&home_path, "credentials", false)? {
         Some(path) => match path.file_name() {
             Some(filename) => Path::new(filename).to_owned(),
             None => Path::new("credentials.toml").to_owned(),
@@ -2364,8 +2747,9 @@ pub fn save_credentials(
     };
 
     let mut file = {
-        gctx.home_path.create_dir()?;
-        gctx.home_path
+        gctx.inner.home_path.create_dir()?;
+        gctx.inner
+            .home_path
             .open_rw_exclusive_create(filename, gctx, "credentials' config file")?
     };
 
@@ -2377,7 +2761,7 @@ pub fn save_credentials(
         )
     })?;
 
-    let mut toml = parse_document(&contents, file.path(), gctx)?;
+    let mut toml = parse_document(&contents, file.path(), &gctx.inner)?;
 
     // Move the old token location to the new one.
     if let Some(token) = toml.remove("token") {
@@ -2523,7 +2907,7 @@ impl ConfigInclude {
     ///
     /// Returns `None` if this is an optional include and the file doesn't exist.
     /// Otherwise returns `Some(PathBuf)` with the absolute path.
-    fn resolve_path(&self, gctx: &GlobalContext) -> Option<PathBuf> {
+    fn resolve_path(&self, gctx: &GlobalContextInner) -> Option<PathBuf> {
         let abs_path = match &self.def {
             Definition::Path(p) | Definition::Cli(Some(p)) | Definition::BuildStdPath(p) => {
                 p.parent().unwrap()
@@ -2547,7 +2931,11 @@ impl ConfigInclude {
     }
 }
 
-fn parse_document(toml: &str, _file: &Path, _gctx: &GlobalContext) -> CargoResult<toml::Table> {
+fn parse_document(
+    toml: &str,
+    _file: &Path,
+    _gctx: &GlobalContextInner,
+) -> CargoResult<toml::Table> {
     // At the moment, no compatibility checks are needed.
     toml.parse().map_err(Into::into)
 }
