@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 registry-dep-using-alloc = { version = "*", features = ['mockbuild'] }
-dep_test = { path = "../../dep_test" }
+dep_test = "0.1.0"
 
 [features]
 feature1 = []

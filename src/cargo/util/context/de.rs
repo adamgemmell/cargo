@@ -22,9 +22,9 @@
 //! [`ConfigValue`]: CV
 
 use crate::util::context::key::ArrayItemKeyPath;
-use crate::util::context::value;
-use crate::util::context::{ConfigError, ConfigKey, GlobalContext};
+use crate::util::context::{ConfigError, ConfigKey, GlobalContextInner};
 use crate::util::context::{ConfigValue as CV, Definition, Value};
+use crate::util::context::{ConfigView, value};
 use crate::util::data_structures::HashSet;
 use serde::{de, de::IntoDeserializer};
 use std::vec;
@@ -33,7 +33,7 @@ use std::vec;
 /// [`GlobalContext::get`].
 #[derive(Clone)]
 pub(super) struct Deserializer<'gctx> {
-    pub(super) gctx: &'gctx GlobalContext,
+    pub(super) gctx: &'gctx GlobalContextInner,
     /// The current key being deserialized.
     pub(super) key: ConfigKey,
     /// Whether or not this key part is allowed to be an inner table. For
@@ -43,6 +43,8 @@ pub(super) struct Deserializer<'gctx> {
     /// collide with `CARGO_BUILD_TARGET_DIR`. See `ConfigMapAccess` for
     /// details.
     pub(super) env_prefix_ok: bool,
+    /// Limits the places to search for a key in - used for build-std.
+    pub(super) config_view: ConfigView,
 }
 
 macro_rules! deserialize_method {
@@ -69,7 +71,9 @@ impl<'de, 'gctx> de::Deserializer<'de> for Deserializer<'gctx> {
     where
         V: de::Visitor<'de>,
     {
-        let cv = self.gctx.get_cv_with_env(&self.key)?;
+        let cv = self
+            .gctx
+            .get_cv_with_env_in_view(&self.key, self.config_view)?;
         if let Some(cv) = cv {
             let res: (Result<V::Value, ConfigError>, Definition) = match cv {
                 CV::Integer(i, def) => (visitor.visit_i64(i), def),
@@ -180,7 +184,7 @@ impl<'de, 'gctx> de::Deserializer<'de> for Deserializer<'gctx> {
         if name == "StringList" {
             let mut res = Vec::new();
 
-            match self.gctx.get_cv(&self.key)? {
+            match self.gctx.get_cv_in_view(&self.key, self.config_view)? {
                 Some(CV::List(val, _def)) => res.extend(val),
                 Some(CV::String(val, def)) => {
                     let split_vs = val
@@ -407,6 +411,7 @@ impl<'de, 'gctx> de::MapAccess<'de> for ConfigMapAccess<'gctx> {
                 gctx: self.de.gctx,
                 key: self.de.key.clone(),
                 env_prefix_ok,
+                config_view: self.de.config_view,
             })
             .map_err(|e| {
                 if !e.is_missing_field() {
@@ -416,7 +421,7 @@ impl<'de, 'gctx> de::MapAccess<'de> for ConfigMapAccess<'gctx> {
                     &self.de.key,
                     self.de
                         .gctx
-                        .get_cv_with_env(&self.de.key)
+                        .get_cv_with_env_in_view(&self.de.key, self.de.config_view)
                         .ok()
                         .and_then(|cv| cv.map(|cv| cv.definition().clone())),
                 )
@@ -435,7 +440,7 @@ impl ConfigSeqAccess<'_> {
     fn new(de: Deserializer<'_>) -> Result<ConfigSeqAccess<'_>, ConfigError> {
         let mut res = Vec::new();
 
-        match de.gctx.get_cv(&de.key)? {
+        match de.gctx.get_cv_in_view(&de.key, de.config_view)? {
             Some(CV::List(val, _definition)) => {
                 res.extend(val);
             }
@@ -508,7 +513,12 @@ impl<'gctx, 'err> ValueSource<'gctx, 'err> {
         let definition = {
             let env = de.key.as_env_key();
             let env_def = Definition::Environment(env.to_string());
-            match (de.gctx.env.contains_key(env), de.gctx.get_cv(&de.key)?) {
+            match (
+                //TODO: consider the view here as well?
+                //What's different here vs get_cv_with_env?
+                de.gctx.env.contains_key(env),
+                de.gctx.get_cv_in_view(&de.key, de.config_view)?,
+            ) {
                 (true, Some(cv)) => {
                     // Both, pick highest priority.
                     if env_def.is_higher_priority(cv.definition()) {
@@ -602,7 +612,7 @@ impl<'de, 'gctx, 'err> de::MapAccess<'de> for ValueDeserializer<'gctx, 'err> {
         // to figure out where the field we just deserialized was defined at.
         match self.definition() {
             Definition::BuiltIn => seed.deserialize(0.into_deserializer()),
-            Definition::Path(path) => {
+            Definition::Path(path) | Definition::BuildStdPath(path) => {
                 seed.deserialize(Tuple2Deserializer(1i32, path.to_string_lossy()))
             }
             Definition::Environment(env) => {

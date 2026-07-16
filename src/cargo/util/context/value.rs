@@ -73,6 +73,10 @@ pub(crate) static FIELDS: [&str; 2] = [VALUE_FIELD, DEFINITION_FIELD];
 #[derive(Clone, Debug, Eq)]
 pub enum Definition {
     BuiltIn,
+    /// A cargo config file only used for the standard library
+    /// The ConfigView set on a per-key basis for lookup defines whether
+    /// later config locations can override configuration here
+    BuildStdPath(PathBuf),
     /// Defined in a `.cargo/config`, includes the path to the file.
     Path(PathBuf),
     /// Defined in an environment variable, includes the environment key.
@@ -107,7 +111,9 @@ impl Definition {
     /// CLI and env use the provided current working directory.
     pub fn root<'a>(&'a self, cwd: &'a Path) -> &'a Path {
         match self {
-            Definition::Path(p) | Definition::Cli(Some(p)) => p.parent().unwrap().parent().unwrap(),
+            Definition::Path(p) | Definition::BuildStdPath(p) | Definition::Cli(Some(p)) => {
+                p.parent().unwrap().parent().unwrap()
+            }
             Definition::Environment(_) | Definition::Cli(None) | Definition::BuiltIn => cwd,
         }
     }
@@ -118,12 +124,16 @@ impl Definition {
     pub fn is_higher_priority(&self, other: &Definition) -> bool {
         matches!(
             (self, other),
+            // TODO: Shouldn't this just use PartialOrd?
             (Definition::Cli(_), Definition::Environment(_))
                 | (Definition::Cli(_), Definition::Path(_))
+                | (Definition::Cli(_), Definition::BuildStdPath(_))
                 | (Definition::Cli(_), Definition::BuiltIn)
                 | (Definition::Environment(_), Definition::Path(_))
+                | (Definition::Environment(_), Definition::BuildStdPath(_))
                 | (Definition::Environment(_), Definition::BuiltIn)
                 | (Definition::Path(_), Definition::BuiltIn)
+                | (Definition::BuildStdPath(_), Definition::BuiltIn)
         )
     }
 }
@@ -141,7 +151,9 @@ impl PartialEq for Definition {
 impl fmt::Display for Definition {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Definition::Path(p) | Definition::Cli(Some(p)) => p.display().fmt(f),
+            Definition::Path(p) | Definition::BuildStdPath(p) | Definition::Cli(Some(p)) => {
+                p.display().fmt(f)
+            }
             Definition::Environment(key) => write!(f, "environment variable `{}`", key),
             Definition::Cli(None) => write!(f, "--config cli option"),
             Definition::BuiltIn => write!(f, "default"),

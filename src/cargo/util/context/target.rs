@@ -101,7 +101,7 @@ pub(super) fn load_host_triple(gctx: &GlobalContext, triple: &str) -> CargoResul
     if gctx.cli_unstable().host_config {
         let host_triple_prefix = format!("host.{}", triple);
         let host_triple_key = ConfigKey::from_str(&host_triple_prefix);
-        let host_prefix = match gctx.get_cv(&host_triple_key)? {
+        let host_prefix = match gctx.inner.get_cv(&host_triple_key)? {
             Some(_) => host_triple_prefix,
             None => "host".to_string(),
         };
@@ -129,7 +129,7 @@ fn load_config_table(gctx: &GlobalContext, prefix: &str) -> CargoResult<TargetCo
     let linker: OptValue<ConfigRelativePath> = gctx.get(&format!("{prefix}.linker"))?;
     // Links do not support environment variables.
     let target_key = ConfigKey::from_str(prefix);
-    let links_overrides = match gctx.get_table(&target_key)? {
+    let links_overrides = match gctx.inner.get_table(&target_key)? {
         Some(links) => parse_links_overrides(&target_key, links.val)?,
         None => BTreeMap::new(),
     };
