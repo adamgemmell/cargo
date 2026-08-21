@@ -9,8 +9,8 @@ use std::sync::Arc;
 
 use anyhow::Context as _;
 use cargo_util_schemas::core::CrateType;
-use cargo_util_schemas::manifest::RustVersion;
 use cargo_util_schemas::manifest::{Hints, TomlManifest, TomlProfiles};
+use cargo_util_schemas::manifest::{InheritableField, RustVersion, TomlPackage, VecStringOrBool};
 use semver::Version;
 use serde::Serialize;
 use serde::ser;
@@ -559,6 +559,96 @@ impl Manifest {
             hints,
             embedded,
         }
+    }
+
+    /// Creates an opaque manifest for a builtin stub with a library target.
+    pub(crate) fn synthetic(id: PackageId, lib_path: PathBuf) -> CargoResult<Self> {
+        let contents = None;
+        let document = None;
+        let original_toml = None;
+        let edition = Edition::Edition2024;
+        let normalized_toml = Rc::new(TomlManifest {
+            package: Some(Box::new(TomlPackage {
+                name: Some(id.name().as_str().parse()?),
+                version: Some(InheritableField::Value(id.version().clone())),
+                edition: Some(InheritableField::Value(edition.to_string())),
+                publish: Some(InheritableField::Value(VecStringOrBool::Bool(false))),
+                ..Default::default()
+            })),
+            ..Default::default()
+        });
+        let summary = Summary::new(id, Vec::new(), &BTreeMap::new(), None::<String>, None)?;
+        let default_kind = None;
+        let forced_kind = None;
+        let mut target = Target::lib_target(
+            &id.name().as_str().replace('-', "_"),
+            vec![CrateType::Lib],
+            lib_path,
+            edition,
+        );
+        target.set_name_inferred(true);
+        let targets = vec![target];
+        let exclude = vec![];
+        let include = vec![];
+        let links = None;
+        let metadata = ManifestMetadata {
+            authors: Vec::new(),
+            keywords: Vec::new(),
+            categories: Vec::new(),
+            license: None,
+            license_file: None,
+            description: None,
+            readme: None,
+            homepage: None,
+            repository: None,
+            documentation: None,
+            badges: BTreeMap::new(),
+            links: None,
+            rust_version: None,
+        };
+        let custom_metadata = None;
+        let publish = Some(Vec::new());
+        let replace = vec![];
+        let patch = HashMap::default();
+        let workspace = WorkspaceConfig::Member { root: None };
+        let unstable_features = Features::default();
+        let rust_version = None;
+        let im_a_teapot = None;
+        let default_run = None;
+        let metabuild = None;
+        let resolve_behavior = None;
+        let lint_rustflags = vec![];
+        let hints = None;
+        let embedded = false;
+        Ok(Manifest::new(
+            contents,
+            document,
+            original_toml,
+            normalized_toml,
+            summary,
+            default_kind,
+            forced_kind,
+            targets,
+            exclude,
+            include,
+            links,
+            metadata,
+            custom_metadata,
+            publish,
+            replace,
+            patch,
+            workspace,
+            unstable_features,
+            edition,
+            rust_version,
+            im_a_teapot,
+            default_run,
+            metabuild,
+            resolve_behavior,
+            lint_rustflags,
+            hints,
+            embedded,
+        ))
     }
 
     /// The raw contents of the original TOML

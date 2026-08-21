@@ -422,6 +422,11 @@ impl GlobalContext {
         self.registry_base_path().join("src")
     }
 
+    /// Gets the Cargo builtins cache directory (`<cargo_home>/builtin/`).
+    pub fn builtins_path(&self) -> Filesystem {
+        self.cargo_home().join("builtin")
+    }
+
     /// Gets the default Cargo registry.
     pub fn default_registry(&self) -> CargoResult<Option<String>> {
         Ok(self
