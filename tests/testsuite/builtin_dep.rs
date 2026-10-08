@@ -72,6 +72,39 @@ Caused by:
 }
 
 #[cargo_test]
+fn resolve_contents() {
+    let p = project()
+        .file("src/lib.rs", "#![no_std]")
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["builtin-dependencies"]
+
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2021"
+
+                [dependencies]
+                core = { builtin = true }
+                "#,
+        )
+        .build();
+
+    p.cargo("metadata --format-version=1")
+        .masquerade_as_nightly_cargo(&["builtin-dependencies"])
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+
+thread [..] panicked at [..]
+not yet implemented: builtin source
+[NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
 fn patching_with_builtins_requires_feature_gate() {
     let p = project()
         .file("src/lib.rs", "use core;")
