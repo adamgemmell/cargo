@@ -36,8 +36,6 @@ use crate::workspace::{
 };
 use crate::workspace::{Summary, Workspace};
 
-/// Information about a package that is available somewhere in the file system.
-///
 /// A package is a `Cargo.toml` file plus all the files that are part of it.
 #[derive(Clone)]
 pub struct Package {
